@@ -152,91 +152,81 @@ const OralGraderPage: React.FC = () => {
       listeningToastId.current = null;
     }
 
-    // Find the latest final result
-    let latestFinalTranscript = '';
-    for (let i = event.results.length - 1; i >= 0; --i) {
-        if (event.results[i].isFinal) {
-            latestFinalTranscript = event.results[i][0].transcript.trim();
-            break; // Process only the latest final one
+    // Process all new final results starting from event.resultIndex
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const result = event.results[i];
+        if (result.isFinal) {
+            const finalTranscript = result[0].transcript.trim();
+
+            // Check if this specific final transcript has already been processed
+            if (finalTranscript === lastProcessedTranscriptRef.current) {
+                console.log('Ignoring duplicate final transcript:', finalTranscript);
+                continue; // Skip this specific duplicate final result
+            }
+
+            // Update the last processed transcript *before* processing
+            lastProcessedTranscriptRef.current = finalTranscript;
+
+            console.log('Processing new final transcript:', finalTranscript);
+
+            const initialProcessedText = finalTranscript.toLowerCase();
+
+            let commandCheckText = initialProcessedText;
+            if (commandCheckText.endsWith('.')) {
+              commandCheckText = commandCheckText.slice(0, -1);
+            }
+
+            if (commandCheckText === "ok" || commandCheckText === "okay") {
+              if (points.length === 0) {
+                showError("Aucun point n'a été dicté avant 'OK'.");
+                setIsListening(false); // Stop listening
+                return; // Stop processing this event
+              }
+              // Total is already calculated in useEffect based on points state
+              const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
+              speakText(announcement);
+
+              setIsListening(false); // Stop listening
+              showSuccess("Calcul du total terminé.");
+              lastProcessedTranscriptRef.current = ''; // Reset after OK command so a new dictation can start fresh
+              return; // Stop processing this event after OK
+            } else {
+              // Process for number parsing, potentially multiple numbers separated by "plus"
+              const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
+
+              if (parts.length === 0) {
+                  // This might be a non-number word or phrase that isn't "ok" and doesn't contain 'plus'
+                  // We can ignore it or show a non-critical message
+                  console.log(`Transcript "${finalTranscript}" is not 'ok' and contains no 'plus' separator.`);
+                  // Optionally show a subtle message or log:
+                  // showError(`Non reconnu : "${finalTranscript}"`);
+                  continue; // Don't add points if no parts found, but continue checking other final results in the event
+              }
+
+              let anyPartParsedSuccessfully = false;
+              const newlyParsedPoints: number[] = [];
+
+              parts.forEach(part => {
+                  const parsedNum = parseNumberPart(part);
+                  if (parsedNum !== null) {
+                    newlyParsedPoints.push(parsedNum);
+                    anyPartParsedSuccessfully = true;
+                  } else {
+                    // Only show error if parsing failed for this specific part
+                    showError(`Point non reconnu dans la séquence "${finalTranscript}" : "${part}"`);
+                    console.log(`Failed to parse part: original="${finalTranscript}", part="${part}"`);
+                  }
+              });
+
+              if (anyPartParsedSuccessfully) {
+                  setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points to the list
+                  // Total calculation happens in the useEffect triggered by setPoints
+              } else {
+                  // If the phrase had parts but none were parsed successfully
+                  showError(`Aucun point valide trouvé dans la séquence : "${finalTranscript}"`);
+              }
+            }
         }
-    }
-
-    const originalSpokenText = latestFinalTranscript;
-
-    if (!originalSpokenText) {
-        // If no final transcript in this event, do nothing
-        return;
-    }
-
-    // Check if this final transcript has already been processed
-    if (originalSpokenText === lastProcessedTranscriptRef.current) {
-        console.log('Ignoring duplicate final transcript:', originalSpokenText);
-        return; // Skip processing this duplicate
-    }
-
-    // Update the last processed transcript
-    lastProcessedTranscriptRef.current = originalSpokenText;
-
-
-    const initialProcessedText = originalSpokenText.toLowerCase(); 
-
-    console.log('Recognized original (final):', originalSpokenText);
-
-    let commandCheckText = initialProcessedText;
-    if (commandCheckText.endsWith('.')) {
-      commandCheckText = commandCheckText.slice(0, -1);
-    }
-
-    if (commandCheckText === "ok" || commandCheckText === "okay") {
-      if (points.length === 0) {
-        showError("Aucun point n'a été dicté avant 'OK'.");
-        setIsListening(false); // Stop listening
-        return; // Don't process as a number
-      }
-      // Total is already calculated in useEffect based on points state
-      const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
-      speakText(announcement);
-
-      setIsListening(false); // Stop listening
-      showSuccess("Calcul du total terminé.");
-      // Clear lastProcessedTranscriptRef after OK command so a new dictation can start fresh
-      lastProcessedTranscriptRef.current = '';
-
-    } else {
-      // Process for number parsing, potentially multiple numbers separated by "plus"
-      const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
-
-      if (parts.length === 0) {
-          // This might be a non-number word or phrase that isn't "ok" and doesn't contain 'plus'
-          // We can ignore it or show a non-critical message
-          console.log(`Transcript "${originalSpokenText}" is not 'ok' and contains no 'plus' separator.`);
-          // Optionally show a subtle message or log:
-          // showError(`Non reconnu : "${originalSpkenText}"`);
-          return; // Don't add points if no parts found
-      }
-
-      let anyPartParsedSuccessfully = false;
-      const newlyParsedPoints: number[] = [];
-
-      parts.forEach(part => {
-          const parsedNum = parseNumberPart(part);
-          if (parsedNum !== null) {
-            newlyParsedPoints.push(parsedNum);
-            anyPartParsedSuccessfully = true;
-          } else {
-            // Only show error if parsing failed for this specific part
-            showError(`Point non reconnu dans la séquence "${originalSpokenText}" : "${part}"`);
-            console.log(`Failed to parse part: original="${originalSpokenText}", part="${part}"`);
-          }
-      });
-
-      if (anyPartParsedSuccessfully) {
-          setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points to the list
-          // Total calculation happens in the useEffect triggered by setPoints
-      } else {
-          // If the phrase had parts but none were parsed successfully
-          showError(`Aucun point valide trouvé dans la séquence : "${originalSpokenText}"`);
-      }
     }
   }, [points, gradingScale, speakText, setIsListening, currentTotal, convertedTotal]); // Added currentTotal, convertedTotal to dependencies for speakText in OK command
 
