@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { showError, showSuccess, showLoading, dismissToast } from '@/utils/toast';
-import { Mic, MicOff, FilePlus2, Volume2 } from 'lucide-react';
+import { Mic, MicOff, FilePlus2, Volume2, Info } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -55,7 +55,7 @@ const OralGraderPage: React.FC = () => {
     }
     let last = event.results.length - 1;
     const originalSpokenText = event.results[last][0].transcript.trim();
-    const initialProcessedText = originalSpokenText.toLowerCase(); // For error reporting
+    const initialProcessedText = originalSpokenText.toLowerCase(); 
 
     console.log('Recognized original:', originalSpokenText);
 
@@ -87,7 +87,6 @@ const OralGraderPage: React.FC = () => {
       let finalNumber: number | null = null;
       const lowerOriginal = originalSpokenText.toLowerCase();
 
-      // Attempt 1: Check for "et demi"
       const etDemiSuffix = " et demi";
       let numberPartText = "";
       let foundEtDemi = false;
@@ -95,7 +94,7 @@ const OralGraderPage: React.FC = () => {
       if (lowerOriginal.endsWith(etDemiSuffix)) {
         numberPartText = lowerOriginal.substring(0, lowerOriginal.length - etDemiSuffix.length).trim();
         foundEtDemi = true;
-      } else if (lowerOriginal.endsWith(etDemiSuffix + ".")) { // Handles "deux et demi."
+      } else if (lowerOriginal.endsWith(etDemiSuffix + ".")) { 
         numberPartText = lowerOriginal.substring(0, lowerOriginal.length - (etDemiSuffix + ".").length).trim();
         foundEtDemi = true;
       }
@@ -113,7 +112,6 @@ const OralGraderPage: React.FC = () => {
         }
       }
 
-      // Attempt 2: Direct parsing (if "et demi" failed or didn't apply)
       if (finalNumber === null) {
         let textToParse = originalSpokenText.toLowerCase();
         if (textToParse.endsWith('.')) {
@@ -245,7 +243,24 @@ const OralGraderPage: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
-      <h1 className="text-3xl font-bold text-center">Correcteur Oral Intelligent</h1>
+      <h1 className="text-3xl font-bold text-center mb-6">Correcteur oral intelligent</h1>
+
+      <Card className="w-full max-w-lg bg-blue-50 border-blue-200">
+        <CardHeader>
+          <CardTitle className="flex items-center text-blue-700">
+            <Info className="mr-2 h-5 w-5" />
+            Comment ça marche ?
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-blue-600 space-y-1">
+          <p>&bull; choisissez le barème (sur 10, 20, 50, 100).</p>
+          <p>&bull; cliquez sur "Commencer" et dictez les points (ex: "deux", "un et demi", "0.5").</p>
+          <p>&bull; dites "OK" pour calculer le total.</p>
+          <p>&bull; l'application annonce et affiche le total (et la conversion sur 20 si besoin).</p>
+          <p>&bull; cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
+        </CardContent>
+      </Card>
+
       <Card className="w-full max-w-lg">
         <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
         <CardContent className="space-y-4">
