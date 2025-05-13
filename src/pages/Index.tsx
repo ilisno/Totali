@@ -150,14 +150,16 @@ const OralGraderPage: React.FC = () => {
       listeningToastId.current = null;
     }
 
-    let finalTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript;
-      }
+    // Find the latest final result
+    let latestFinalTranscript = '';
+    for (let i = event.results.length - 1; i >= 0; --i) {
+        if (event.results[i].isFinal) {
+            latestFinalTranscript = event.results[i][0].transcript.trim();
+            break; // Process only the latest final one
+        }
     }
 
-    const originalSpokenText = finalTranscript.trim();
+    const originalSpokenText = latestFinalTranscript;
 
     if (!originalSpokenText) {
         // If no final transcript in this event, do nothing
