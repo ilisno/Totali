@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Keep Select imports for now, might remove later
-import { Input } from "@/components/ui/input"; // Import Input
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { showError, showSuccess, showLoading, dismissToast } from '@/utils/toast';
@@ -16,7 +15,6 @@ declare global {
   }
 }
 
-// Removed GRADING_SCALES array as we'll use a custom input
 const numberWords: { [key: string]: string } = {
   'zéro': '0', 'zero': '0', 'un': '1', 'deux': '2', 'trois': '3',
   'quatre': '4', 'cinq': '5', 'six': '6', 'sept': '7', 'huit': '8',
@@ -25,9 +23,13 @@ const numberWords: { [key: string]: string } = {
 };
 
 const OralGraderPage: React.FC = () => {
-  // Use state for the input string and the parsed number
-  const [gradingScaleInput, setGradingScaleInput] = useState<string>('20');
-  const [gradingScale, setGradingScale] = useState<number>(20); // Numeric value used for calculations
+  // State for initial grading scale
+  const [initialScaleInput, setInitialScaleInput] = useState<string>('20');
+  const [initialScale, setInitialScale] = useState<number>(20); // Numeric value for calculations
+
+  // State for optional conversion scale
+  const [conversionScaleInput, setConversionScaleInput] = useState<string>('');
+  const [conversionScale, setConversionScale] = useState<number | null>(null); // Numeric value for conversion, null if not set
 
   const [points, setPoints] = useState<number[]>([]);
   const [currentTotal, setCurrentTotal] = useState<number | null>(null);
@@ -45,18 +47,25 @@ const OralGraderPage: React.FC = () => {
     isListeningRef.current = isListening;
   }, [isListening]);
 
-  // Update numeric gradingScale when input string changes
+  // Update numeric scales when input strings change
   useEffect(() => {
-    const parsedScale = parseFloat(gradingScaleInput);
-    if (!isNaN(parsedScale) && parsedScale > 0) {
-      setGradingScale(parsedScale);
+    const parsedInitialScale = parseFloat(initialScaleInput);
+    if (!isNaN(parsedInitialScale) && parsedInitialScale > 0) {
+      setInitialScale(parsedInitialScale);
     } else {
-      // If input is invalid, maybe default to 20 or show an error
-      // For now, let's just log and keep the previous valid scale
-      console.warn("Invalid scale input:", gradingScaleInput);
-      // setGradingScale(20); // Option to reset to 20 on invalid input
+      console.warn("Invalid initial scale input:", initialScaleInput);
+      // Keep previous valid scale or handle error state
     }
-  }, [gradingScaleInput]);
+  }, [initialScaleInput]);
+
+  useEffect(() => {
+    const parsedConversionScale = parseFloat(conversionScaleInput);
+    if (!isNaN(parsedConversionScale) && parsedConversionScale > 0) {
+      setConversionScale(parsedConversionScale);
+    } else {
+      setConversionScale(null); // Set to null if input is empty, invalid, or <= 0
+    }
+  }, [conversionScaleInput]);
 
 
   const speakText = useCallback((text: string) => {
@@ -91,14 +100,17 @@ const OralGraderPage: React.FC = () => {
       }
       const sum = points.reduce((acc, p) => acc + p, 0);
       setCurrentTotal(sum);
-      let announcement = `Total : ${sum} sur ${gradingScale}.`; // Use gradingScale
-      if (gradingScale !== 20) { // Compare with numeric gradingScale
-        const converted = parseFloat(((sum / gradingScale) * 20).toFixed(1));
+      
+      let announcement = `Total : ${sum} sur ${initialScale}.`; // Announce initial total
+      
+      if (conversionScale !== null && conversionScale !== initialScale) {
+        const converted = parseFloat(((sum / initialScale) * conversionScale).toFixed(1));
         setConvertedTotal(converted);
-        announcement += ` Soit ${converted} sur 20.`;
+        announcement += ` Soit ${converted} sur ${conversionScale}.`; // Announce conversion
       } else {
-        setConvertedTotal(null);
+        setConvertedTotal(null); // No conversion needed or valid
       }
+      
       speakText(announcement);
       setIsListening(false);
       showSuccess("Calcul du total terminé.");
@@ -157,7 +169,7 @@ const OralGraderPage: React.FC = () => {
         console.log(`Failed to parse: original="${originalSpokenText}", initialProcessedText="${initialProcessedText}"`);
       }
     }
-  }, [points, gradingScale, speakText, setIsListening]); // Added gradingScale to dependencies
+  }, [points, initialScale, conversionScale, speakText, setIsListening]); // Added initialScale and conversionScale to dependencies
 
   const handleRecognitionResultRef = useRef(handleRecognitionResultCallback);
   useEffect(() => {
@@ -223,11 +235,11 @@ const OralGraderPage: React.FC = () => {
 
   const toggleListening = () => {
     if (!isSupported) { showError("Fonctionnalité non supportée."); return; }
-    if (gradingScale <= 0 || isNaN(gradingScale)) {
-        showError("Veuillez entrer un barème valide (nombre positif).");
+    if (initialScale <= 0 || isNaN(initialScale)) { // Check initial scale validity
+        showError("Veuillez entrer un barème initial valide (nombre positif).");
         return;
     }
-
+    // No need to check conversionScale validity here, it's optional
 
     if (isListening) {
       setIsListening(false);
@@ -281,11 +293,12 @@ const OralGraderPage: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-blue-600 space-y-1">
-          <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p> {/* Updated instruction */}
+          <p>&bull; Choisissez le barème initial (sur combien sont les points dictés).</p> {/* Updated instruction */}
+          <p>&bull; Choisissez un barème de conversion optionnel (par ex. 20).</p> {/* New instruction */}
           <p>&bull; Cliquez sur "Commencer" et dictez les points (ex: "deux", "un et demi", "0.5").</p>
-          <p>&bull; Dites "OK" pour calculer le total.</p> {/* Capitalized first letter */}
-          <p>&bull; L'application annonce et affiche le total (et la conversion sur 20 si besoin).</p> {/* Capitalized first letter */}
-          <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p> {/* Capitalized first letter */}
+          <p>&bull; Dites "OK" pour calculer le total.</p>
+          <p>&bull; L'application annonce et affiche le total (et la conversion si demandée).</p> {/* Updated instruction */}
+          <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
         </CardContent>
       </Card>
 
@@ -293,19 +306,31 @@ const OralGraderPage: React.FC = () => {
         <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label htmlFor="scale-input" className="block text-sm font-medium mb-1">Barème (sur combien ?) :</label> {/* Updated label */}
+            <label htmlFor="initial-scale-input" className="block text-sm font-medium mb-1">Barème initial (sur combien ?) :</label> {/* Updated label */}
             <Input
-              id="scale-input"
+              id="initial-scale-input"
               type="number"
-              value={gradingScaleInput}
-              onChange={(e) => setGradingScaleInput(e.target.value)}
+              value={initialScaleInput}
+              onChange={(e) => setInitialScaleInput(e.target.value)}
               min="1"
               disabled={isListening || currentTotal !== null}
-              placeholder="Ex: 20, 50, 100..."
+              placeholder="Ex: 50"
+            />
+          </div>
+           <div>
+            <label htmlFor="conversion-scale-input" className="block text-sm font-medium mb-1">Convertir sur (optionnel) :</label> {/* New label */}
+            <Input
+              id="conversion-scale-input"
+              type="number"
+              value={conversionScaleInput}
+              onChange={(e) => setConversionScaleInput(e.target.value)}
+              min="1"
+              disabled={isListening || currentTotal !== null}
+              placeholder="Ex: 20"
             />
           </div>
           <div className="flex space-x-2">
-            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || gradingScale <= 0 || isNaN(gradingScale)}> {/* Disable if scale is invalid */}
+            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || initialScale <= 0 || isNaN(initialScale)}> {/* Disable if initial scale is invalid */}
               {isListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
               {isListening ? "Arrêter" : "Commencer"}
             </Button>
@@ -326,19 +351,14 @@ const OralGraderPage: React.FC = () => {
         <Card className="w-full max-w-lg bg-green-50 border-green-200">
           <CardHeader><CardTitle className="text-green-700">Résultat Final</CardTitle></CardHeader>
           <CardContent className="text-center">
-            <p className="text-2xl font-bold">Total : {currentTotal} / {gradingScale}</p> {/* Use gradingScale */}
-            {gradingScale !== 20 && convertedTotal !== null && ( // Show conversion only if scale is not 20
-              <p className="text-xl text-muted-foreground">&rarr; Conversion sur 20 : {convertedTotal} / 20</p> // Clarified text
+            <p className="text-2xl font-bold">Total : {currentTotal} / {initialScale}</p> {/* Use initialScale */}
+            {conversionScale !== null && conversionScale !== initialScale && convertedTotal !== null && ( // Show conversion only if conversionScale is set and different from initialScale
+              <p className="text-xl text-muted-foreground">&rarr; Converti sur {conversionScale} : {convertedTotal} / {conversionScale}</p> {/* Clarified text */}
             )}
-            <Button variant="ghost" size="sm" onClick={() => speakText(`Total : ${currentTotal} sur ${gradingScale}.${convertedTotal !== null ? ` Soit ${convertedTotal} sur 20.` : ''}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button>
+            <Button variant="ghost" size="sm" onClick={() => speakText(`Total : ${currentTotal} sur ${initialScale}.${conversionScale !== null && conversionScale !== initialScale && convertedTotal !== null ? ` Soit ${convertedTotal} sur ${conversionScale}.` : ''}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button>
           </CardContent>
         </Card>
       )}
-
-      {/* Explanation for Share feature limitation */}
-      <div className="w-full max-w-lg text-center text-sm text-muted-foreground mt-8">
-        <p>Cette application fonctionne directement dans votre navigateur. Les résultats ne sont pas sauvegardés en ligne, il n'y a donc pas de fonction de partage des notes spécifiques.</p>
-      </div>
     </div>
   );
 };
