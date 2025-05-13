@@ -104,6 +104,8 @@ const OralGraderPage: React.FC = () => {
   const synthesisRef = useRef<any>(null);
   const isListeningRef = useRef(isListening);
   const listeningToastId = useRef<string | number | null>(null);
+  const lastProcessedTranscriptRef = useRef(''); // Ref to store the last successfully processed final transcript
+
 
   // Update isListeningRef whenever isListening changes
   useEffect(() => {
@@ -166,6 +168,16 @@ const OralGraderPage: React.FC = () => {
         return;
     }
 
+    // Check if this final transcript has already been processed
+    if (originalSpokenText === lastProcessedTranscriptRef.current) {
+        console.log('Ignoring duplicate final transcript:', originalSpokenText);
+        return; // Skip processing this duplicate
+    }
+
+    // Update the last processed transcript
+    lastProcessedTranscriptRef.current = originalSpokenText;
+
+
     const initialProcessedText = originalSpokenText.toLowerCase(); 
 
     console.log('Recognized original (final):', originalSpokenText);
@@ -187,14 +199,20 @@ const OralGraderPage: React.FC = () => {
 
       setIsListening(false); // Stop listening
       showSuccess("Calcul du total terminé.");
+      // Clear lastProcessedTranscriptRef after OK command so a new dictation can start fresh
+      lastProcessedTranscriptRef.current = '';
+
     } else {
       // Process for number parsing, potentially multiple numbers separated by "plus"
       const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
 
       if (parts.length === 0) {
-          showError(`Point(s) non reconnu(s) : "${originalSpokenText}"`);
-          console.log(`Failed to parse: original="${originalSpokenText}", initialProcessedText="${initialProcessedText}"`);
-          return; // No valid parts found
+          // This might be a non-number word or phrase that isn't "ok" and doesn't contain 'plus'
+          // We can ignore it or show a non-critical message
+          console.log(`Transcript "${originalSpokenText}" is not 'ok' and contains no 'plus' separator.`);
+          // Optionally show a subtle message or log:
+          // showError(`Non reconnu : "${originalSpkenText}"`);
+          return; // Don't add points if no parts found
       }
 
       let anyPartParsedSuccessfully = false;
@@ -314,6 +332,8 @@ const OralGraderPage: React.FC = () => {
       showSuccess("Dictée arrêtée.");
     } else {
       if (currentTotal !== null) { setPoints([]); setCurrentTotal(null); setConvertedTotal(null); }
+      // Reset the last processed transcript when starting a new dictation
+      lastProcessedTranscriptRef.current = '';
       setIsListening(true);
       if (recognitionRef.current) {
         try {
@@ -335,6 +355,8 @@ const OralGraderPage: React.FC = () => {
         setIsListening(false); // This will set isListeningRef.current to false
         if (recognitionRef.current) recognitionRef.current.stop(); // Explicitly stop recognition
     }
+    // Reset the last processed transcript when starting a new copy
+    lastProcessedTranscriptRef.current = '';
     if (listeningToastId.current) { dismissToast(listeningToastId.current); listeningToastId.current = null; }
     showSuccess("Prêt pour une nouvelle copie.");
   };
