@@ -334,11 +334,6 @@ const OralGraderPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
-
-      {/* Explanation for Share feature limitation */}
-      <div className="w-full max-w-lg text-center text-sm text-muted-foreground mt-8">
-        <p>Cette application fonctionne directement dans votre navigateur. Pour la partager avec vos collègues, il suffit de leur envoyer le lien de cette page.</p>
-      </div>
     </div>
   );
 };
