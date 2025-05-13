@@ -337,7 +337,7 @@ const OralGraderPage: React.FC = () => {
 
       {/* Explanation for Share feature limitation */}
       <div className="w-full max-w-lg text-center text-sm text-muted-foreground mt-8">
-        <p>Cette application fonctionne directement dans votre navigateur. Les résultats ne sont pas sauvegardés en ligne, il n'y a donc pas de fonction de partage des notes spécifiques.</p>
+        <p>Cette application fonctionne directement dans votre navigateur. Pour la partager avec vos collègues, il suffit de leur envoyer le lien de cette page.</p>
       </div>
     </div>
   );
