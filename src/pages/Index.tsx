@@ -16,7 +16,6 @@ declare global {
   }
 }
 
-// Removed GRADING_SCALES array as we'll use a custom input
 const numberWords: { [key: string]: string } = {
   'zéro': '0', 'zero': '0', 'un': '1', 'deux': '2', 'trois': '3',
   'quatre': '4', 'cinq': '5', 'six': '6', 'sept': '7', 'huit': '8',
@@ -24,12 +23,78 @@ const numberWords: { [key: string]: string } = {
   'quatorze': '14', 'quinze': '15', 'seize': '16', 'de': '2',
 };
 
+// Helper function to parse a single text part into a number
+const parseNumberPart = (part: string): number | null => {
+    let finalNumber: number | null = null;
+    let processedPart = part.trim().toLowerCase();
+
+    // Attempt 1: Check for "et demi"
+    const etDemiSuffix = " et demi";
+    let numberPartText = "";
+    let foundEtDemi = false;
+
+    if (processedPart.endsWith(etDemiSuffix)) {
+      numberPartText = processedPart.substring(0, processedPart.length - etDemiSuffix.length).trim();
+      foundEtDemi = true;
+    } else if (processedPart.endsWith(etDemiSuffix + ".")) {
+      numberPartText = processedPart.substring(0, processedPart.length - (etDemiSuffix + ".").length).trim();
+      foundEtDemi = true;
+    }
+
+    if (foundEtDemi) {
+      let cleanedPrefix = numberPartText;
+      // Map number words in prefix
+      for (const word in numberWords) {
+          const regex = new RegExp(`\\b${word}\\b`, 'g'); // Use word boundaries
+          cleanedPrefix = cleanedPrefix.replace(regex, numberWords[word]);
+      }
+      // Replace comma/point with period
+      cleanedPrefix = cleanedPrefix.replace(/,/g, '.').replace(/point/g, '.');
+      // Remove spaces around period
+      cleanedPrefix = cleanedPrefix.replace(/\s*\.\s*/g, '.');
+
+      const baseNumber = parseFloat(cleanedPrefix);
+      if (!isNaN(baseNumber)) {
+        finalNumber = baseNumber + 0.5;
+      }
+    }
+
+    // Attempt 2: Direct parsing (if "et demi" failed or didn't apply)
+    if (finalNumber === null) {
+      let cleanedPart = processedPart;
+      // Remove trailing period
+      if (cleanedPart.endsWith('.')) {
+           cleanedPart = cleanedPart.slice(0, -1);
+      }
+
+      // Map number words
+      for (const word in numberWords) {
+           const regex = new RegExp(`\\b${word}\\b`, 'g'); // Use word boundaries
+           cleanedPart = cleanedPart.replace(regex, numberWords[word]);
+      }
+
+      // Replace comma/point with period
+      cleanedPart = cleanedPart.replace(/,/g, '.').replace(/point/g, '.');
+
+      // Remove spaces around period
+      cleanedPart = cleanedPart.replace(/\s*\.\s*/g, '.');
+
+      const parsedNum = parseFloat(cleanedPart);
+      if (!isNaN(parsedNum)) {
+        finalNumber = parsedNum;
+      }
+    }
+
+    return (finalNumber !== null && finalNumber >= 0) ? finalNumber : null; // Allow 0 points
+};
+
+
 const OralGraderPage: React.FC = () => {
   // Use state for the input string and the parsed number
   const [gradingScaleInput, setGradingScaleInput] = useState<string>('20');
   const [gradingScale, setGradingScale] = useState<number>(20); // Numeric value used for calculations
 
-  const [points, setPoints] = useState<number[]>([]);
+  const [points, setPoints] = useState<number[]>([]); // Stores individual points
   const [currentTotal, setCurrentTotal] = useState<number | null>(null);
   const [convertedTotal, setConvertedTotal] = useState<number | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -57,6 +122,17 @@ const OralGraderPage: React.FC = () => {
       // setGradingScale(20); // Option to reset to 20 on invalid input
     }
   }, [gradingScaleInput]);
+
+  // Effect to update total and converted total whenever points change
+  useEffect(() => {
+      const sum = points.reduce((acc, p) => acc + p, 0);
+      setCurrentTotal(sum);
+      if (gradingScale !== 20) {
+          setConvertedTotal(parseFloat(((sum / gradingScale) * 20).toFixed(1)));
+      } else {
+          setConvertedTotal(null);
+      }
+  }, [points, gradingScale]); // Recalculate when points or gradingScale change
 
 
   const speakText = useCallback((text: string) => {
@@ -103,14 +179,8 @@ const OralGraderPage: React.FC = () => {
         setIsListening(false); // Stop listening
         return; // Don't process as a number
       }
-      const sum = points.reduce((acc, p) => acc + p, 0);
-      const converted = gradingScale !== 20 ? parseFloat(((sum / gradingScale) * 20).toFixed(1)) : null;
-
-      setCurrentTotal(sum);
-      setConvertedTotal(converted);
-
-      // Announce only the final note
-      const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScale}`;
+      // Total is already calculated in useEffect based on points state
+      const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
       speakText(announcement);
 
       setIsListening(false); // Stop listening
@@ -125,77 +195,14 @@ const OralGraderPage: React.FC = () => {
           return; // No valid parts found
       }
 
-      let successfullyParsedCount = 0;
+      let anyPartParsedSuccessfully = false;
+      const newlyParsedPoints: number[] = [];
+
       parts.forEach(part => {
-          let finalNumber: number | null = null;
-          let processedPart = part; // Start with the part
-
-          // Attempt 1: Check for "et demi"
-          const etDemiSuffix = " et demi";
-          let numberPartText = "";
-          let foundEtDemi = false;
-
-          if (processedPart.endsWith(etDemiSuffix)) {
-            numberPartText = processedPart.substring(0, processedPart.length - etDemiSuffix.length).trim();
-            foundEtDemi = true;
-          } else if (processedPart.endsWith(etDemiSuffix + ".")) {
-            numberPartText = processedPart.substring(0, processedPart.length - (etDemiSuffix + ".").length).trim();
-            foundEtDemi = true;
-          }
-
-          if (foundEtDemi) {
-            let cleanedPrefix = numberPartText;
-            // Map number words in prefix
-            for (const word in numberWords) {
-                const regex = new RegExp(`\\b${word}\\b`, 'g'); // Use word boundaries
-                cleanedPrefix = cleanedPrefix.replace(regex, numberWords[word]);
-            }
-            // Replace comma/point with period
-            cleanedPrefix = cleanedPrefix.replace(/,/g, '.').replace(/point/g, '.');
-            // Remove spaces around period
-            cleanedPrefix = cleanedPrefix.replace(/\s*\.\s*/g, '.');
-
-            const baseNumber = parseFloat(cleanedPrefix);
-            if (!isNaN(baseNumber)) {
-              finalNumber = baseNumber + 0.5;
-              console.log(`Part "${part}" -> "et demi" logic: numberPart="${numberPartText}", cleanedPrefix="${cleanedPrefix}", baseNumber=${baseNumber}, finalNumber=${finalNumber}`);
-            } else {
-                 console.log(`Part "${part}" -> "et demi" logic: Failed to parse prefix "${numberPartText}" (cleaned as "${cleanedPrefix}")`);
-            }
-          }
-
-          // Attempt 2: Direct parsing (if "et demi" failed or didn't apply)
-          if (finalNumber === null) {
-            let cleanedPart = processedPart;
-            // Remove trailing period
-            if (cleanedPart.endsWith('.')) {
-                 cleanedPart = cleanedPart.slice(0, -1);
-            }
-
-            // Map number words
-            for (const word in numberWords) {
-                 const regex = new RegExp(`\\b${word}\\b`, 'g'); // Use word boundaries
-                 cleanedPart = cleanedPart.replace(regex, numberWords[word]);
-            }
-
-            // Replace comma/point with period
-            cleanedPart = cleanedPart.replace(/,/g, '.').replace(/point/g, '.');
-
-            // Remove spaces around period
-            cleanedPart = cleanedPart.replace(/\s*\.\s*/g, '.');
-
-            const parsedNum = parseFloat(cleanedPart);
-            if (!isNaN(parsedNum)) {
-              finalNumber = parsedNum;
-              console.log(`Part "${part}" -> Direct parsing logic: cleanedPart="${cleanedPart}", finalNumber=${finalNumber}`);
-            } else {
-                 console.log(`Part "${part}" -> Direct parsing logic: Failed to parse "${part}" (cleaned as "${cleanedPart}")`);
-            }
-          }
-
-          if (finalNumber !== null && finalNumber >= 0) {
-            setPoints(prev => [...prev, finalNumber]); // Add each parsed number individually
-            successfullyParsedCount++;
+          const parsedNum = parseNumberPart(part);
+          if (parsedNum !== null) {
+            newlyParsedPoints.push(parsedNum);
+            anyPartParsedSuccessfully = true;
           } else {
             // Only show error if parsing failed for this specific part
             showError(`Point non reconnu dans la séquence "${originalSpokenText}" : "${part}"`);
@@ -203,12 +210,15 @@ const OralGraderPage: React.FC = () => {
           }
       });
 
-      if (parts.length > 0 && successfullyParsedCount === 0) {
-          // If no points were successfully parsed from the phrase
+      if (anyPartParsedSuccessfully) {
+          setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points to the list
+          // Total calculation happens in the useEffect triggered by setPoints
+      } else {
+          // If the phrase had parts but none were parsed successfully
           showError(`Aucun point valide trouvé dans la séquence : "${originalSpokenText}"`);
       }
     }
-  }, [points, gradingScale, speakText, setIsListening]); // Added gradingScale to dependencies
+  }, [points, gradingScale, speakText, setIsListening, currentTotal, convertedTotal]); // Added currentTotal, convertedTotal to dependencies for speakText in OK command
 
   const handleRecognitionResultRef = useRef(handleRecognitionResultCallback);
   useEffect(() => {
