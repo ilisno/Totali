@@ -27,22 +27,24 @@ const OralGraderPage: React.FC = () => {
 
   const recognitionRef = useRef<any>(null);
   const synthesisRef = useRef<any>(null);
-  const isListeningRef = useRef(isListening);
+  const isListeningRef = useRef(isListening); // Ref to track isListening for onend handler
   const listeningToastId = useRef<string | number | null>(null);
 
+  // Update isListeningRef whenever isListening changes
   useEffect(() => {
     isListeningRef.current = isListening;
   }, [isListening]);
 
   const speakText = useCallback((text: string) => {
     if (!synthesisRef.current || !isSupported) return;
-    synthesisRef.current.cancel();
+    synthesisRef.current.cancel(); // Cancel any previous speech
     const utterance = new window.SpeechSynthesisUtterance(text);
     utterance.lang = 'fr-FR';
     synthesisRef.current.speak(utterance);
-  }, [isSupported]);
+  }, [isSupported]); // Depends only on isSupported
 
-  const handleRecognitionResult = useCallback((event: any) => {
+  // Callback for handling recognition results
+  const handleRecognitionResultCallback = useCallback((event: any) => {
     if (listeningToastId.current) {
       dismissToast(listeningToastId.current);
       listeningToastId.current = null;
@@ -54,8 +56,6 @@ const OralGraderPage: React.FC = () => {
     console.log('Recognized original:', originalSpokenText);
     console.log('Processed (lowercase):', processedText);
 
-    // Check for "OK" command first
-    // Handle cases like "ok." by removing trailing period for command check
     let commandCheckText = processedText;
     if (commandCheckText.endsWith('.')) {
       commandCheckText = commandCheckText.slice(0, -1);
@@ -64,8 +64,8 @@ const OralGraderPage: React.FC = () => {
     if (commandCheckText === "ok" || commandCheckText === "okay") {
       if (points.length === 0) {
         showError("Aucun point n'a été dicté avant 'OK'.");
-        setIsListening(false);
-        if (recognitionRef.current) recognitionRef.current.stop();
+        setIsListening(false); // Stop listening
+        // recognitionRef.current.stop() will be called by onend if isListeningRef.current is false
         return;
       }
       const sum = points.reduce((acc, p) => acc + p, 0);
@@ -80,73 +80,60 @@ const OralGraderPage: React.FC = () => {
       }
       
       speakText(announcement);
-      setIsListening(false);
-      if (recognitionRef.current) recognitionRef.current.stop();
+      setIsListening(false); // Stop listening
       showSuccess("Calcul du total terminé.");
     } else {
-      // Process for number parsing
-      // 1. Remove trailing period (if any)
       if (processedText.endsWith('.')) {
         processedText = processedText.slice(0, -1);
-        console.log('After period removal for number parsing:', processedText);
       }
-
-      // 2. Replace comma with period for decimals like "1,5"
       processedText = processedText.replace(',', '.');
-      console.log('After comma replacement for number parsing:', processedText);
 
-      // 3. Map common French number words to digits
       const numberWords: { [key: string]: string } = {
-        'zéro': '0', 'zero': '0',
-        'un': '1',
-        'deux': '2',
-        'trois': '3',
-        'quatre': '4',
-        'cinq': '5',
-        'six': '6',
-        'sept': '7',
-        'huit': '8',
-        'neuf': '9',
-        'dix': '10',
-        'onze': '11',
-        'douze': '12',
-        'treize': '13',
-        'quatorze': '14',
-        'quinze': '15',
-        'seize': '16',
-        'de': '2', // Handles "deux" recognized as "de." -> processed to "de"
+        'zéro': '0', 'zero': '0', 'un': '1', 'deux': '2', 'trois': '3',
+        'quatre': '4', 'cinq': '5', 'six': '6', 'sept': '7', 'huit': '8',
+        'neuf': '9', 'dix': '10', 'onze': '11', 'douze': '12', 'treize': '13',
+        'quatorze': '14', 'quinze': '15', 'seize': '16', 'de': '2',
       };
 
       if (numberWords[processedText]) {
         processedText = numberWords[processedText];
-        console.log('After word mapping for number parsing:', processedText);
       }
 
       const number = parseFloat(processedText);
       if (!isNaN(number) && number >= 0) {
-        setPoints(prevPoints => [...prevPoints, number]);
+        setPoints(prev => [...prev, number]);
       } else {
         showError(`Point non reconnu : "${originalSpokenText}" (traité comme "${processedText}")`);
       }
     }
-  }, [points, selectedScale, speakText, setIsListening]);
+  }, [points, selectedScale, speakText, setIsListening]); // Dependencies of the callback logic
 
+  // Ref to hold the latest version of handleRecognitionResultCallback
+  const handleRecognitionResultRef = useRef(handleRecognitionResultCallback);
+  useEffect(() => {
+    handleRecognitionResultRef.current = handleRecognitionResultCallback;
+  }, [handleRecognitionResultCallback]);
+
+  // Effect for setting up SpeechRecognition
   useEffect(() => {
     if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) || !('speechSynthesis' in window)) {
       setIsSupported(false);
       showError("Votre navigateur ne supporte pas la reconnaissance ou la synthèse vocale.");
       return;
     }
+    setIsSupported(true); // Ensure isSupported is true if APIs are present
 
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognitionRef.current = new SpeechRecognitionAPI();
-    recognitionRef.current.continuous = false; // Important: process one utterance at a time
-    recognitionRef.current.interimResults = false;
-    recognitionRef.current.lang = 'fr-FR';
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'fr-FR';
 
-    recognitionRef.current.onresult = handleRecognitionResult;
+    recognition.onresult = (event) => {
+      handleRecognitionResultRef.current(event); // Call the latest callback via ref
+    };
 
-    recognitionRef.current.onerror = (event: any) => {
+    recognition.onerror = (event: any) => {
       if (listeningToastId.current) {
         dismissToast(listeningToastId.current);
         listeningToastId.current = null;
@@ -154,42 +141,33 @@ const OralGraderPage: React.FC = () => {
       console.error('Speech recognition error', event.error);
       let errorMessage = "Erreur de reconnaissance vocale";
       if (event.error === 'no-speech') {
-        errorMessage = "Aucun son détecté. L'écoute continue..."; // Will be restarted by onend if still listening
+        errorMessage = "Aucun son détecté. L'écoute continue...";
         console.warn('Speech recognition: no speech detected.');
-        // Don't show error toast for no-speech, as it will auto-restart if isListening is true
       } else if (event.error === 'audio-capture') {
-        errorMessage = "Problème avec le microphone.";
-        setIsListening(false);
+        errorMessage = "Problème avec le microphone."; setIsListening(false);
       } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        errorMessage = "Permission d'utiliser le microphone refusée ou service non autorisé.";
-        setIsListening(false);
+        errorMessage = "Permission d'utiliser le microphone refusée ou service non autorisé."; setIsListening(false);
       } else if (event.error === 'network') {
-        errorMessage = "Erreur réseau avec le service de reconnaissance vocale.";
-        setIsListening(false);
+        errorMessage = "Erreur réseau avec le service de reconnaissance vocale."; setIsListening(false);
       } else {
-         errorMessage = `Erreur de reconnaissance: ${event.error}`;
-         setIsListening(false); // Stop for other unhandled errors
+         errorMessage = `Erreur de reconnaissance: ${event.error}`; setIsListening(false);
       }
-      
-      if (event.error !== 'no-speech') { // Only show error toast for actual errors, not just silence
-          showError(errorMessage);
-      }
+      if (event.error !== 'no-speech') showError(errorMessage);
     };
 
-    recognitionRef.current.onend = () => {
-      if (isListeningRef.current) { // Check if we should still be listening
+    recognition.onend = () => {
+      if (isListeningRef.current) { // Check ref for current listening state
         try {
-          if (recognitionRef.current) {
-            recognitionRef.current.start(); // Restart listening
-          }
+          if (recognition) recognition.start();
         } catch (e) {
           console.error("Speech recognition failed to restart in onend:", e);
           showError("La reconnaissance vocale s'est arrêtée. Veuillez réessayer.");
-          setIsListening(false); // Update state to reflect it's no longer listening
+          setIsListening(false);
         }
       }
     };
     
+    recognitionRef.current = recognition;
     synthesisRef.current = window.speechSynthesis;
 
     return () => {
@@ -202,30 +180,30 @@ const OralGraderPage: React.FC = () => {
       if (synthesisRef.current) synthesisRef.current.cancel();
       if (listeningToastId.current) dismissToast(listeningToastId.current);
     };
-  }, [handleRecognitionResult, setIsListening]); // Added setIsListening
+  }, [isSupported, setIsListening]); // Effect depends on isSupported and stable setIsListening
 
   const toggleListening = () => {
     if (!isSupported) {
       showError("Fonctionnalité non supportée par votre navigateur.");
       return;
     }
-    if (currentTotal !== null) {
-        showError("Une copie est déjà notée. Cliquez sur 'Nouvelle Copie' pour continuer.");
-        return;
-    }
 
     if (isListening) {
-      setIsListening(false); // This will trigger onend, which won't restart if isListeningRef.current is false
-      if (recognitionRef.current) recognitionRef.current.stop(); // Explicitly stop
+      setIsListening(false); // This will set isListeningRef.current to false via its useEffect
+      // recognitionRef.current.stop() will be effectively called by onend not restarting
       if (listeningToastId.current) {
         dismissToast(listeningToastId.current);
         listeningToastId.current = null;
       }
       showSuccess("Dictée arrêtée.");
     } else {
-      setPoints([]); 
-      setCurrentTotal(null);
-      setConvertedTotal(null);
+      if (currentTotal !== null) { // A previous grading was completed. Clear for a new one.
+        setPoints([]);
+        setCurrentTotal(null);
+        setConvertedTotal(null);
+      }
+      // If currentTotal is null, points persist (for resuming or first-time use)
+      
       setIsListening(true);
       if (recognitionRef.current) {
         try {
@@ -245,9 +223,9 @@ const OralGraderPage: React.FC = () => {
     setPoints([]);
     setCurrentTotal(null);
     setConvertedTotal(null);
-    if (isListening) { // If listening, stop it
-        setIsListening(false);
-        if (recognitionRef.current) recognitionRef.current.stop();
+    if (isListening) {
+        setIsListening(false); // This will set isListeningRef.current to false
+        // recognitionRef.current.stop() will be effectively called by onend not restarting
     }
     if (listeningToastId.current) {
       dismissToast(listeningToastId.current);
@@ -256,7 +234,7 @@ const OralGraderPage: React.FC = () => {
     showSuccess("Prêt pour une nouvelle copie.");
   };
 
-  if (!isSupported) {
+  if (!isSupported && isSupported !== undefined) { // Check undefined to avoid flash of this message on init
     return (
       <div className="container mx-auto p-4 flex flex-col items-center justify-center min-h-screen">
         <Card className="w-full max-w-md">
@@ -290,7 +268,7 @@ const OralGraderPage: React.FC = () => {
             </Select>
           </div>
           <div className="flex space-x-2">
-            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || currentTotal !== null}>
+            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported}>
               {isListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
               {isListening ? "Arrêter la dictée" : "Commencer la dictée"}
             </Button>
