@@ -68,15 +68,29 @@ const OralGraderPage: React.FC = () => {
   }, [isSupported]);
 
   const handleRecognitionResultCallback = useCallback((event: any) => {
+    // Dismiss loading toast once any result comes in
     if (listeningToastId.current) {
       dismissToast(listeningToastId.current);
       listeningToastId.current = null;
     }
-    let last = event.results.length - 1;
-    const originalSpokenText = event.results[last][0].transcript.trim();
+
+    let finalTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript;
+      }
+    }
+
+    const originalSpokenText = finalTranscript.trim();
+
+    if (!originalSpokenText) {
+        // If no final transcript in this event, do nothing
+        return;
+    }
+
     const initialProcessedText = originalSpokenText.toLowerCase(); 
 
-    console.log('Recognized original:', originalSpokenText);
+    console.log('Recognized original (final):', originalSpokenText);
 
     let commandCheckText = initialProcessedText;
     if (commandCheckText.endsWith('.')) {
@@ -86,8 +100,8 @@ const OralGraderPage: React.FC = () => {
     if (commandCheckText === "ok" || commandCheckText === "okay") {
       if (points.length === 0) {
         showError("Aucun point n'a été dicté avant 'OK'.");
-        setIsListening(false);
-        return;
+        setIsListening(false); // Stop listening
+        return; // Don't process as a number
       }
       const sum = points.reduce((acc, p) => acc + p, 0);
       setCurrentTotal(sum);
@@ -100,9 +114,10 @@ const OralGraderPage: React.FC = () => {
         setConvertedTotal(null);
       }
       speakText(announcement);
-      setIsListening(false);
+      setIsListening(false); // Stop listening
       showSuccess("Calcul du total terminé.");
     } else {
+      // Process for number parsing
       let finalNumber: number | null = null;
       const lowerOriginal = originalSpokenText.toLowerCase();
 
@@ -174,8 +189,8 @@ const OralGraderPage: React.FC = () => {
 
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true; // Set to true for continuous listening
+    recognition.interimResults = true; // We need interim results to build the final transcript
     recognition.lang = 'fr-FR';
 
     recognition.onresult = (event) => handleRecognitionResultRef.current(event);
@@ -187,22 +202,36 @@ const OralGraderPage: React.FC = () => {
       }
       console.error('Speech recognition error', event.error);
       let errorMessage = "Erreur de reconnaissance vocale";
-      if (event.error === 'no-speech') errorMessage = "Aucun son détecté. L'écoute continue...";
-      else if (event.error === 'audio-capture') { errorMessage = "Problème avec le microphone."; setIsListening(false); }
-      else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') { errorMessage = "Permission microphone refusée."; setIsListening(false); }
-      else if (event.error === 'network') { errorMessage = "Erreur réseau."; setIsListening(false); }
-      else { errorMessage = `Erreur: ${event.error}`; setIsListening(false); }
+      if (event.error === 'no-speech') {
+         // No need to show error toast for no-speech in continuous mode, it just means silence
+         console.warn('Speech recognition: no speech detected.');
+      } else if (event.error === 'audio-capture') {
+        errorMessage = "Problème avec le microphone."; setIsListening(false);
+      } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        errorMessage = "Permission microphone refusée."; setIsListening(false);
+      } else if (event.error === 'network') {
+        errorMessage = "Erreur réseau."; setIsListening(false);
+      } else {
+         errorMessage = `Erreur: ${event.error}`; setIsListening(false);
+      }
       if (event.error !== 'no-speech') showError(errorMessage);
     };
 
     recognition.onend = () => {
+      // In continuous mode, onend might fire less often or after long pauses.
+      // We still want to restart if we are supposed to be listening.
+      console.log("Recognition ended. isListeningRef.current:", isListeningRef.current);
       if (isListeningRef.current) {
-        try { if (recognition) recognition.start(); }
-        catch (e) {
-          console.error("Recognition failed to restart:", e);
-          showError("Reconnaissance arrêtée. Réessayez.");
-          setIsListening(false);
+        try {
+            console.log("Attempting to restart recognition...");
+            recognition.start();
+        } catch (e) {
+            console.error("Recognition failed to restart in onend:", e);
+            showError("Reconnaissance arrêtée. Veuillez réessayer.");
+            setIsListening(false);
         }
+      } else {
+          console.log("Recognition ended as expected (isListening is false).");
       }
     };
     
@@ -214,12 +243,12 @@ const OralGraderPage: React.FC = () => {
         recognitionRef.current.onresult = null;
         recognitionRef.current.onerror = null;
         recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
+        recognitionRef.current.stop(); // Stop recognition when component unmounts or effect re-runs
       }
       if (synthesisRef.current) synthesisRef.current.cancel();
       if (listeningToastId.current) dismissToast(listeningToastId.current);
     };
-  }, [isSupported, setIsListening]);
+  }, [isSupported, setIsListening]); // Effect depends on isSupported and setIsListening
 
   const toggleListening = () => {
     if (!isSupported) { showError("Fonctionnalité non supportée."); return; }
@@ -228,9 +257,11 @@ const OralGraderPage: React.FC = () => {
         return;
     }
 
-
     if (isListening) {
-      setIsListening(false);
+      setIsListening(false); // This will set isListeningRef.current to false
+      if (recognitionRef.current) {
+          recognitionRef.current.stop(); // Explicitly stop recognition
+      }
       if (listeningToastId.current) { dismissToast(listeningToastId.current); listeningToastId.current = null; }
       showSuccess("Dictée arrêtée.");
     } else {
@@ -252,7 +283,10 @@ const OralGraderPage: React.FC = () => {
 
   const handleNewCopy = () => {
     setPoints([]); setCurrentTotal(null); setConvertedTotal(null);
-    if (isListening) setIsListening(false);
+    if (isListening) {
+        setIsListening(false); // This will set isListeningRef.current to false
+        if (recognitionRef.current) recognitionRef.current.stop(); // Explicitly stop recognition
+    }
     if (listeningToastId.current) { dismissToast(listeningToastId.current); listeningToastId.current = null; }
     showSuccess("Prêt pour une nouvelle copie.");
   };
