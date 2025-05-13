@@ -117,59 +117,77 @@ const OralGraderPage: React.FC = () => {
       setIsListening(false); // Stop listening
       showSuccess("Calcul du total terminé.");
     } else {
-      // Process for number parsing
-      let finalNumber: number | null = null;
-      const lowerOriginal = originalSpokenText.toLowerCase();
+      // Process for number parsing, potentially multiple numbers separated by "plus"
+      const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
 
-      const etDemiSuffix = " et demi";
-      let numberPartText = "";
-      let foundEtDemi = false;
-
-      if (lowerOriginal.endsWith(etDemiSuffix)) {
-        numberPartText = lowerOriginal.substring(0, lowerOriginal.length - etDemiSuffix.length).trim();
-        foundEtDemi = true;
-      } else if (lowerOriginal.endsWith(etDemiSuffix + ".")) { 
-        numberPartText = lowerOriginal.substring(0, lowerOriginal.length - (etDemiSuffix + ".").length).trim();
-        foundEtDemi = true;
-      }
-      
-      if (foundEtDemi) {
-        let processedNumberPart = numberPartText;
-        if (numberWords[processedNumberPart]) {
-          processedNumberPart = numberWords[processedNumberPart];
-        }
-        processedNumberPart = processedNumberPart.replace(',', '.');
-        const baseNumber = parseFloat(processedNumberPart);
-        if (!isNaN(baseNumber)) {
-          finalNumber = baseNumber + 0.5;
-          console.log(`"et demi" logic: original="${originalSpokenText}", numberPart="${numberPartText}", baseNumber=${baseNumber}, finalNumber=${finalNumber}`);
-        }
+      if (parts.length === 0) {
+          showError(`Point(s) non reconnu(s) : "${originalSpokenText}"`);
+          console.log(`Failed to parse: original="${originalSpokenText}", initialProcessedText="${initialProcessedText}"`);
+          return; // No valid parts found
       }
 
-      if (finalNumber === null) {
-        let textToParse = originalSpokenText.toLowerCase();
-        if (textToParse.endsWith('.')) {
-          textToParse = textToParse.slice(0, -1);
-        }
-        textToParse = textToParse.replace(',', '.');
+      let successfullyParsedCount = 0;
+      parts.forEach(part => {
+          let finalNumber: number | null = null;
+          let textToParse = part; // Start with the part
 
-        let textForNumberWords = textToParse;
-        if (numberWords[textForNumberWords]) {
-          textToParse = numberWords[textForNumberWords];
-        }
-        
-        const parsedNum = parseFloat(textToParse);
-        if (!isNaN(parsedNum)) {
-          finalNumber = parsedNum;
-          console.log(`Direct parsing logic: original="${originalSpokenText}", textToParse="${textToParse}", finalNumber=${finalNumber}`);
-        }
-      }
+          // Attempt 1: Check for "et demi"
+          const etDemiSuffix = " et demi";
+          let numberPartText = "";
+          let foundEtDemi = false;
 
-      if (finalNumber !== null && finalNumber >= 0) {
-        setPoints(prev => [...prev, finalNumber]);
-      } else {
-        showError(`Point non reconnu : "${originalSpokenText}" (traité comme "${initialProcessedText}")`);
-        console.log(`Failed to parse: original="${originalSpokenText}", initialProcessedText="${initialProcessedText}"`);
+          if (textToParse.endsWith(etDemiSuffix)) {
+            numberPartText = textToParse.substring(0, textToParse.length - etDemiSuffix.length).trim();
+            foundEtDemi = true;
+          } else if (textToParse.endsWith(etDemiSuffix + ".")) {
+            numberPartText = textToParse.substring(0, textToParse.length - (etDemiSuffix + ".").length).trim();
+            foundEtDemi = true;
+          }
+
+          if (foundEtDemi) {
+            let processedNumberPart = numberPartText;
+            if (numberWords[processedNumberPart]) {
+              processedNumberPart = numberWords[processedNumberPart];
+            }
+            processedNumberPart = processedNumberPart.replace(',', '.');
+            const baseNumber = parseFloat(processedNumberPart);
+            if (!isNaN(baseNumber)) {
+              finalNumber = baseNumber + 0.5;
+              console.log(`Part "${part}" -> "et demi" logic: numberPart="${numberPartText}", baseNumber=${baseNumber}, finalNumber=${finalNumber}`);
+            }
+          }
+
+          // Attempt 2: Direct parsing (if "et demi" failed or didn't apply)
+          if (finalNumber === null) {
+            if (textToParse.endsWith('.')) {
+              textToParse = textToParse.slice(0, -1);
+            }
+            textToParse = textToParse.replace(',', '.');
+
+            let textForNumberWords = textToParse;
+            if (numberWords[textForNumberWords]) {
+              textToParse = numberWords[textForNumberWords];
+            }
+
+            const parsedNum = parseFloat(textToParse);
+            if (!isNaN(parsedNum)) {
+              finalNumber = parsedNum;
+              console.log(`Part "${part}" -> Direct parsing logic: textToParse="${textToParse}", finalNumber=${finalNumber}`);
+            }
+          }
+
+          if (finalNumber !== null && finalNumber >= 0) {
+            setPoints(prev => [...prev, finalNumber]); // Add each parsed number individually
+            successfullyParsedCount++;
+          } else {
+            showError(`Point non reconnu dans la séquence "${originalSpokenText}" : "${part}"`);
+            console.log(`Failed to parse part: original="${originalSpokenText}", part="${part}"`);
+          }
+      });
+
+      if (successfullyParsedCount === 0) {
+          // If no points were successfully parsed from the phrase
+          showError(`Aucun point valide trouvé dans la séquence : "${originalSpokenText}"`);
       }
     }
   }, [points, gradingScale, speakText, setIsListening]); // Added gradingScale to dependencies
@@ -271,7 +289,7 @@ const OralGraderPage: React.FC = () => {
         try {
           recognitionRef.current.start();
           if (listeningToastId.current) dismissToast(listeningToastId.current);
-          listeningToastId.current = showLoading("J'écoute... Dites les points ou \"OK\".");
+          listeningToastId.current = showLoading("J'écoute... Dites les points séparés par \"plus\" ou dites \"OK\".");
         } catch (e) {
           console.error("Error starting recognition:", e);
           showError("Impossible de démarrer la reconnaissance.");
@@ -315,11 +333,11 @@ const OralGraderPage: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-blue-600 space-y-1">
-          <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p> {/* Updated instruction */}
-          <p>&bull; Cliquez sur "Commencer" et dictez les points (ex: "deux", "un et demi", "0.5").</p>
-          <p>&bull; Dites "OK" pour calculer le total.</p> {/* Capitalized first letter */}
-          <p>&bull; L'application annonce et affiche le total (et la conversion sur 20 si besoin).</p> {/* Capitalized first letter */}
-          <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p> {/* Capitalized first letter */}
+          <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p>
+          <p>&bull; Cliquez sur "Commencer" et dictez les points **séparés par "plus"** (ex: "deux plus un et demi plus trois").</p> {/* Updated instruction */}
+          <p>&bull; Dites "OK" pour calculer le total.</p>
+          <p>&bull; L'application annonce et affiche le total (et la conversion sur 20 si besoin).</p>
+          <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
         </CardContent>
       </Card>
 
@@ -327,7 +345,7 @@ const OralGraderPage: React.FC = () => {
         <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label htmlFor="scale-input" className="block text-sm font-medium mb-1">Barème (sur combien ?) :</label> {/* Updated label */}
+            <label htmlFor="scale-input" className="block text-sm font-medium mb-1">Barème (sur combien ?) :</label>
             <Input
               id="scale-input"
               type="number"
@@ -339,7 +357,7 @@ const OralGraderPage: React.FC = () => {
             />
           </div>
           <div className="flex space-x-2">
-            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || gradingScale <= 0 || isNaN(gradingScale)}> {/* Disable if scale is invalid */}
+            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || gradingScale <= 0 || isNaN(gradingScale)}>
               {isListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
               {isListening ? "Arrêter" : "Commencer"}
             </Button>
@@ -347,7 +365,7 @@ const OralGraderPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
-      {isListening && (<p className="text-lg font-semibold text-primary animate-pulse"><Mic className="inline-block mr-2" /> J'écoute... Dites les points ou "OK".</p>)}
+      {isListening && (<p className="text-lg font-semibold text-primary animate-pulse"><Mic className="inline-block mr-2" /> J'écoute... Dites les points séparés par "plus" ou dites "OK".</p>)} {/* Updated listening message */}
       {(points.length > 0 || currentTotal !== null) && (
         <Card className="w-full max-w-lg">
           <CardHeader><CardTitle>Points Dictés</CardTitle></CardHeader>
@@ -360,9 +378,9 @@ const OralGraderPage: React.FC = () => {
         <Card className="w-full max-w-lg bg-green-50 border-green-200">
           <CardHeader><CardTitle className="text-green-700">Résultat Final</CardTitle></CardHeader>
           <CardContent className="text-center">
-            <p className="text-2xl font-bold">Total : {currentTotal} / {gradingScale}</p> {/* Use gradingScale */}
-            {gradingScale !== 20 && convertedTotal !== null && ( // Show conversion only if scale is not 20
-              <p className="text-xl text-muted-foreground">&rarr; Conversion sur 20 : {convertedTotal} / 20</p> // Clarified text
+            <p className="text-2xl font-bold">Total : {currentTotal} / {gradingScale}</p>
+            {gradingScale !== 20 && convertedTotal !== null && (
+              <p className="text-xl text-muted-foreground">&rarr; Conversion sur 20 : {convertedTotal} / 20</p>
             )}
             <Button variant="ghost" size="sm" onClick={() => speakText(`Total : ${currentTotal} sur ${gradingScale}.${convertedTotal !== null ? ` Soit ${convertedTotal} sur 20.` : ''}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button>
           </CardContent>
