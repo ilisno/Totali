@@ -104,16 +104,15 @@ const OralGraderPage: React.FC = () => {
         return; // Don't process as a number
       }
       const sum = points.reduce((acc, p) => acc + p, 0);
+      const converted = gradingScale !== 20 ? parseFloat(((sum / gradingScale) * 20).toFixed(1)) : null;
+
       setCurrentTotal(sum);
-      let announcement = `Total : ${sum} sur ${gradingScale}.`; // Use gradingScale
-      if (gradingScale !== 20) { // Compare with numeric gradingScale
-        const converted = parseFloat(((sum / gradingScale) * 20).toFixed(1));
-        setConvertedTotal(converted);
-        announcement += ` Soit ${converted} sur 20.`;
-      } else {
-        setConvertedTotal(null);
-      }
+      setConvertedTotal(converted);
+
+      // Announce only the final note
+      const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScale}`;
       speakText(announcement);
+
       setIsListening(false); // Stop listening
       showSuccess("Calcul du total terminé.");
     } else {
@@ -389,7 +388,12 @@ const OralGraderPage: React.FC = () => {
         <Card className="w-full max-w-lg">
           <CardHeader><CardTitle>Points Dictés</CardTitle></CardHeader>
           <CardContent>
-            {points.length > 0 ? (<ScrollArea className="h-32 border rounded-md p-2"><ul className="space-y-1">{points.map((p, i) => ( <li key={i} className="text-sm">{p}</li> ))}</ul></ScrollArea>) : ( currentTotal === null && <p className="text-sm text-muted-foreground">Aucun point.</p> )}
+            {points.length > 0 ? (
+              <ScrollArea className="h-32 border rounded-md p-2">
+                {/* Display points in a single line */}
+                <p className="text-sm break-words">{points.join(' + ')}</p>
+              </ScrollArea>
+            ) : ( currentTotal === null && <p className="text-sm text-muted-foreground">Aucun point.</p> )}
           </CardContent>
         </Card>
       )}
@@ -401,7 +405,7 @@ const OralGraderPage: React.FC = () => {
             {gradingScale !== 20 && convertedTotal !== null && (
               <p className="text-xl text-muted-foreground">&rarr; Conversion sur 20 : {convertedTotal} / 20</p>
             )}
-            <Button variant="ghost" size="sm" onClick={() => speakText(`Total : ${currentTotal} sur ${gradingScale}.${convertedTotal !== null ? ` Soit ${convertedTotal} sur 20.` : ''}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button>
+            <Button variant="ghost" size="sm" onClick={() => speakText(convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button> {/* Updated speak text */}
           </CardContent>
         </Card>
       )}
