@@ -162,16 +162,21 @@ const OralGraderPage: React.FC = () => {
   }, [parseNumberPart, showError, setPoints, setPendingNumberPart]);
 
 
-  // Memoize processTranscriptionSegment using useCallback
-  const processTranscriptionSegment = useCallback((segment: string) => {
-      console.log("--- Processing Segment ---");
+  // Memoized function to process a segment for points
+  const processSegmentForPoints = useCallback((segment: string, shouldLeavePending: boolean) => {
+      console.log("--- Processing Segment for Points ---");
       console.log("Initial pendingNumberPart (from ref):", pendingNumberPartRef.current); // Use ref
-      console.log("Latest segment:", segment); // This segment is already lowercase now
+      console.log("Segment to process:", segment);
+      console.log("Should leave pending:", shouldLeavePending);
 
-      const cleanedSegment = segment.trim(); // Already lowercase, just trim
+      const cleanedSegment = segment.trim();
       if (!cleanedSegment) {
           console.log("Segment is empty after cleaning. Doing nothing.");
-          return; // Ignore empty segments
+          if (!shouldLeavePending) { // If we shouldn't leave pending, clear it
+             pendingNumberPartRef.current = null;
+             setPendingNumberPart(null);
+          }
+          return;
       }
 
       // Combine the current pending part (from ref) with the new segment
@@ -188,7 +193,6 @@ const OralGraderPage: React.FC = () => {
 
       console.log("Cleaned sequence before split:", potentialFullSequence);
 
-
       // Split by '+'
       const parts = potentialFullSequence.split('+').map(part => part.trim()).filter(part => part !== '');
       console.log("Split parts by '+' (after trim/filter):", parts);
@@ -196,12 +200,13 @@ const OralGraderPage: React.FC = () => {
       const newPoints: number[] = [];
       let newPendingPart: string | null = null;
 
-      if (parts.length > 0) { // Process all parts except the very last one
-          const partsToProcess = parts.slice(0, -1); // All parts except the last one
-          newPendingPart = parts[parts.length - 1]; // The very last part is the new pending part
+      if (parts.length > 0) {
+          const partsToProcess = shouldLeavePending ? parts.slice(0, -1) : parts; // Process all parts if not leaving pending
+          newPendingPart = shouldLeavePending ? parts[parts.length - 1] : null; // Only set pending if requested
 
-          console.log("Parts to process (before last):", partsToProcess);
-          console.log("New pending part set to:", newPendingPart);
+          console.log("Parts to process:", partsToProcess);
+          console.log("New pending part will be:", newPendingPart);
+
 
           for (const part of partsToProcess) {
               console.log(`Attempting to parse part: "${part}"`);
@@ -218,7 +223,7 @@ const OralGraderPage: React.FC = () => {
       } else {
           // parts.length is 0, which means potentialFullSequence was empty after trim/filter.
           console.log("Processed segment resulted in no parts.");
-          newPendingPart = null; // Clear pending if somehow empty
+          newPendingPart = null; // Always clear pending if no parts resulted
       }
 
       // Update state and ref
@@ -233,7 +238,7 @@ const OralGraderPage: React.FC = () => {
       console.log("Updating pendingNumberPart state/ref to:", newPendingPart);
       pendingNumberPartRef.current = newPendingPart; // Update ref immediately
       setPendingNumberPart(newPendingPart); // Then update state
-      console.log("--- End Processing Segment ---");
+      console.log("--- End Processing Segment for Points ---");
 
   }, [parseNumberPart, showError, setPoints, setPendingNumberPart]); // Dependencies updated
 
@@ -299,17 +304,17 @@ const OralGraderPage: React.FC = () => {
                 console.log(`Command '${command}' detected.`);
                 console.log(`Part before command: "${preCommandPart}"`);
 
-                // 1. Process the part of the segment *before* the command
-                if (preCommandPart) {
-                    processTranscriptionSegment(preCommandPart);
-                } else {
-                    console.log("No significant part before the command.");
-                }
+                // Process the part of the segment *before* the command, ensuring ALL parts are processed
+                // and no new pending part is left from this sequence.
+                processSegmentForPoints(preCommandPart, false); // Pass false for shouldLeavePending
 
-                // 2. Process any number part that is now pending (which would be the last number from preCommandPart)
+                // Now, process any number part that was pending *before* this segment arrived.
+                // This handles cases like "5 plus [pause] 3 ok" where 3 was pending from the previous segment.
+                // Note: processPendingPart already clears the pending part.
                 processPendingPart();
 
-                // 3. Execute command action
+
+                // Execute command action
                 if (command === "fini") {
                     recognitionRef.current.stop(); // Stop the recognition
                     showSuccess("Enregistrement terminé.");
@@ -333,8 +338,9 @@ const OralGraderPage: React.FC = () => {
                 return; // Stop processing this result further
             }
 
-            // If no command was detected, process the entire segment for potential points
-            processTranscriptionSegment(latestTranscript); // Pass the lowercase transcript
+            // If no command was detected, process the entire segment for potential points,
+            // allowing the last part to be left pending if it doesn't end with '+'.
+            processSegmentForPoints(latestTranscript, true); // Pass true for shouldLeavePending
             setIsProcessing(false); // Processing finished
             console.log("--- End onresult (Processed Segment) ---");
         };
@@ -364,7 +370,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [speakText, processTranscriptionSegment, processPendingPart, showError, showLoading, dismissToast, setIsRecording, setIsProcessing, setCumulativeTranscription, setPoints, setCurrentTotal, setConvertedTotal, setPendingNumberPart]); // Dependencies updated
+  }, [speakText, processSegmentForPoints, processPendingPart, showError, showLoading, dismissToast, setIsRecording, setIsProcessing, setCumulativeTranscription, setPoints, setCurrentTotal, setConvertedTotal, setPendingNumberPart]); // Dependencies updated
 
 
   // Update numeric gradingScale when input string changes
