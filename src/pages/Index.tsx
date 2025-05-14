@@ -105,6 +105,64 @@ const OralGraderPage: React.FC = () => {
   const recognitionRef = useRef<any>(null); // Reference to the SpeechRecognition instance
   const synthesisRef = useRef<any>(null);
 
+  // Memoize speakText using useCallback
+  const speakText = useCallback((text: string) => {
+    if (!synthesisRef.current) {
+        console.warn("Speech Synthesis not available.");
+        showError("Synthèse vocale non supportée.");
+        return;
+    }
+    synthesisRef.current.cancel(); // Stop any ongoing speech
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    utterance.lang = 'fr-FR'; // Set language to French
+    synthesisRef.current.speak(utterance);
+  }, [synthesisRef.current, showError]); // Dependencies for speakText
+
+  // Memoize processTranscriptionSegment using useCallback
+  const processTranscriptionSegment = useCallback((segment: string) => {
+      const processedSegment = segment.trim().toLowerCase();
+      if (!processedSegment) return; // Ignore empty segments
+
+      // Combine with pending part from previous segment
+      const combinedText = pendingNumberPart ? `${pendingNumberPart} ${processedSegment}` : processedSegment;
+      console.log("Processing combined text:", combinedText);
+
+      const parts = combinedText.split('plus').map(part => part.trim()).filter(part => part !== '');
+
+      if (parts.length === 0) {
+          console.log(`No 'plus' found in segment, setting as pending: "${combinedText}"`);
+          setPendingNumberPart(combinedText); // The whole segment becomes the new pending part
+          return;
+      }
+
+      const newPoints: number[] = [];
+      // Process all parts except the last one
+      for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          const parsedNum = parseNumberPart(part);
+          if (parsedNum !== null) {
+              newPoints.push(parsedNum);
+              console.log("Parsed and added point:", parsedNum, "from part:", part);
+          } else {
+              showError(`Partie non reconnue comme point : "${part}"`);
+              console.log(`Failed to parse part "${part}" from combined text "${combinedText}"`);
+          }
+      }
+
+      // The last part becomes the new pending part
+      const lastPart = parts[parts.length - 1];
+      setPendingNumberPart(lastPart);
+      console.log("Setting new pending part:", lastPart);
+
+
+      // Add the newly parsed points to the state
+      if (newPoints.length > 0) {
+          setPoints(prev => [...prev, ...newPoints]);
+      }
+
+  }, [pendingNumberPart, setPoints, setPendingNumberPart, showError]); // Dependencies for processTranscriptionSegment
+
+
   // Initialize Speech Synthesis and check for Speech Recognition support
   useEffect(() => {
     if ('speechSynthesis' in window) {
@@ -231,7 +289,8 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [points, currentTotal, convertedTotal, pendingNumberPart, speakText, gradingScale, setPoints, setPendingNumberPart, showError]); // Added dependencies for state and callbacks used in handlers
+  }, [points, currentTotal, convertedTotal, pendingNumberPart, gradingScale, speakText, processTranscriptionSegment]); // Updated dependencies
+
 
   // Update numeric gradingScale when input string changes
   useEffect(() => {
@@ -253,63 +312,6 @@ const OralGraderPage: React.FC = () => {
           setConvertedTotal(null);
       }
   }, [points, gradingScale]); // Recalculate when points or gradingScale change
-
-
-  const speakText = useCallback((text: string) => {
-    if (!synthesisRef.current) {
-        console.warn("Speech Synthesis not available.");
-        showError("Synthèse vocale non supportée.");
-        return;
-    }
-    synthesisRef.current.cancel(); // Stop any ongoing speech
-    const utterance = new window.SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR'; // Set language to French
-    synthesisRef.current.speak(utterance);
-  }, []);
-
-  // Process a single transcription segment to extract points based on 'plus'
-  const processTranscriptionSegment = useCallback((segment: string) => {
-      const processedSegment = segment.trim().toLowerCase();
-      if (!processedSegment) return; // Ignore empty segments
-
-      // Combine with pending part from previous segment
-      const combinedText = pendingNumberPart ? `${pendingNumberPart} ${processedSegment}` : processedSegment;
-      console.log("Processing combined text:", combinedText);
-
-      const parts = combinedText.split('plus').map(part => part.trim()).filter(part => part !== '');
-
-      if (parts.length === 0) {
-          console.log(`No 'plus' found in segment, setting as pending: "${combinedText}"`);
-          setPendingNumberPart(combinedText); // The whole segment becomes the new pending part
-          return;
-      }
-
-      const newPoints: number[] = [];
-      // Process all parts except the last one
-      for (let i = 0; i < parts.length - 1; i++) {
-          const part = parts[i];
-          const parsedNum = parseNumberPart(part);
-          if (parsedNum !== null) {
-              newPoints.push(parsedNum);
-              console.log("Parsed and added point:", parsedNum, "from part:", part);
-          } else {
-              showError(`Partie non reconnue comme point : "${part}"`);
-              console.log(`Failed to parse part "${part}" from combined text "${combinedText}"`);
-          }
-      }
-
-      // The last part becomes the new pending part
-      const lastPart = parts[parts.length - 1];
-      setPendingNumberPart(lastPart);
-      console.log("Setting new pending part:", lastPart);
-
-
-      // Add the newly parsed points to the state
-      if (newPoints.length > 0) {
-          setPoints(prev => [...prev, ...newPoints]);
-      }
-
-  }, [pendingNumberPart, setPoints, setPendingNumberPart, showError]); // Add dependencies
 
 
   const startRecording = () => {
