@@ -98,8 +98,8 @@ const OralGraderPage: React.FC = () => {
   const [convertedTotal, setConvertedTotal] = useState<number | null>(null);
 
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Keep processing state for parsing
-  const [transcribedText, setTranscribedText] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false); // State to indicate parsing/command processing
+  const [cumulativeTranscription, setCumulativeTranscription] = useState<string>('');
 
   const recognitionRef = useRef<any>(null); // Reference to the SpeechRecognition instance
   const synthesisRef = useRef<any>(null);
@@ -118,28 +118,61 @@ const OralGraderPage: React.FC = () => {
         console.error("Speech Recognition API not supported.");
     } else {
         recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = false; // Process results after each utterance
-        recognitionRef.current.interimResults = false; // Only return final results
+        recognitionRef.current.continuous = true; // Keep listening until stopped
+        recognitionRef.current.interimResults = false; // Only return final results for each segment
         recognitionRef.current.lang = 'fr-FR'; // Set language to French
 
         recognitionRef.current.onstart = () => {
             setIsRecording(true);
-            setIsProcessing(false); // Not processing audio, but waiting for result
-            setTranscribedText(''); // Clear previous transcription
-            // Clear points and totals when starting a new recording session
-            setPoints([]);
-            setCurrentTotal(null);
+            setIsProcessing(false);
+            setCumulativeTranscription(''); // Clear previous transcription
+            setPoints([]); // Clear points
+            setCurrentTotal(null); // Clear totals
             setConvertedTotal(null);
-            showLoading("Enregistrement en cours... Dites les points.");
+            showLoading("Enregistrement en cours... Dites les points ou 'OK' ou 'fini'.");
         };
 
         recognitionRef.current.onresult = (event: any) => {
+            setIsProcessing(true); // Indicate processing of the result
             dismissToast(); // Dismiss loading toast
-            const transcript = event.results[0][0].transcript;
-            setTranscribedText(transcript);
-            console.log("Transcription received:", transcript);
-            // Process the transcribed text immediately after receiving a result
-            processTranscription(transcript);
+
+            const latestResultIndex = event.results.length - 1;
+            const latestTranscript = event.results[latestResultIndex][0].transcript;
+
+            console.log("Latest segment transcription:", latestTranscript);
+
+            // Update cumulative transcription state
+            setCumulativeTranscription(prev => prev + latestTranscript + ' ');
+
+            const cleanedLatestTranscript = latestTranscript.trim().toLowerCase().replace(/\.$/, ''); // Remove trailing period for command check
+
+            // Check for commands
+            if (cleanedLatestTranscript === "fini") {
+                console.log("'Fini' command detected. Stopping recognition.");
+                recognitionRef.current.stop(); // Stop the recognition
+                showSuccess("Enregistrement terminé.");
+                setIsProcessing(false); // Processing finished
+                return; // Stop processing this result further
+            }
+
+            if (cleanedLatestTranscript === "ok" || cleanedLatestTranscript === "okay") {
+                 console.log("'OK' command detected. Announcing total.");
+                 if (points.length === 0) {
+                    speakText("Aucun point n'a été dicté.");
+                    showError("Aucun point n'a été dicté avant 'OK'.");
+                 } else {
+                    // Total is already calculated in useEffect based on points state
+                    const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
+                    speakText(announcement);
+                    showSuccess("Annonce du total actuel.");
+                 }
+                 setIsProcessing(false); // Processing finished
+                 return; // Stop processing this result further
+            }
+
+            // If not a command, process as points
+            processTranscriptionSegment(latestTranscript);
+            setIsProcessing(false); // Processing finished
         };
 
         recognitionRef.current.onerror = (event: any) => {
@@ -154,7 +187,7 @@ const OralGraderPage: React.FC = () => {
             dismissToast();
             console.log("Speech recognition ended.");
             setIsRecording(false);
-            setIsProcessing(false); // Processing is done in onresult
+            setIsProcessing(false);
         };
     }
 
@@ -167,7 +200,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, []); // Empty dependency array means this runs once on mount
+  }, [points, currentTotal, convertedTotal]); // Added dependencies for speakText in onresult
 
   // Update numeric gradingScale when input string changes
   useEffect(() => {
@@ -203,53 +236,37 @@ const OralGraderPage: React.FC = () => {
     synthesisRef.current.speak(utterance);
   }, []);
 
-  const processTranscription = useCallback((transcription: string) => {
-      setIsProcessing(true); // Indicate that parsing is happening
-      const initialProcessedText = transcription.toLowerCase();
-      let commandCheckText = initialProcessedText;
-      if (commandCheckText.endsWith('.')) {
-        commandCheckText = commandCheckText.slice(0, -1);
-      }
+  // Process a single transcription segment to extract points
+  const processTranscriptionSegment = useCallback((segment: string) => {
+      const processedSegment = segment.toLowerCase();
+      const parts = processedSegment.split('plus').map(part => part.trim()).filter(part => part !== '');
 
-      if (commandCheckText === "ok" || commandCheckText === "okay") {
-        if (points.length === 0) {
-          showError("Aucun point n'a été dicté avant 'OK'.");
-        } else {
-            // Total is already calculated in useEffect based on points state
-            const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
-            speakText(announcement);
-            showSuccess("Calcul du total terminé.");
-        }
+      if (parts.length === 0) {
+          console.log(`No points found in segment: "${segment}"`);
+          // Optionally show a subtle message or log if a segment had no recognizable points
       } else {
-        const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
+          let anyPartParsedSuccessfully = false;
+          const newlyParsedPoints: number[] = [];
 
-        if (parts.length === 0) {
-            showError(`Aucun point ou commande 'OK' reconnu dans la transcription : "${transcription}"`);
-        } else {
-            let anyPartParsedSuccessfully = false;
-            const newlyParsedPoints: number[] = [];
+          parts.forEach(part => {
+              const parsedNum = parseNumberPart(part);
+              if (parsedNum !== null) {
+                newlyParsedPoints.push(parsedNum);
+                anyPartParsedSuccessfully = true;
+              } else {
+                console.log(`Failed to parse part "${part}" from segment "${segment}"`);
+                // Optionally show a subtle error for unparseable parts
+              }
+          });
 
-            parts.forEach(part => {
-                const parsedNum = parseNumberPart(part);
-                if (parsedNum !== null) {
-                  newlyParsedPoints.push(parsedNum);
-                  anyPartParsedSuccessfully = true;
-                } else {
-                  showError(`Point non reconnu dans la séquence "${transcription}" : "${part}"`);
-                  console.log(`Failed to parse part: original="${transcription}", part="${part}"`);
-                }
-            });
-
-            if (anyPartParsedSuccessfully) {
-                setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points
-                // Total calculation happens in the useEffect triggered by setPoints
-            } else {
-                showError(`Aucun point valide trouvé dans la séquence : "${transcription}"`);
-            }
-        }
+          if (anyPartParsedSuccessfully) {
+              setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points from this segment
+              console.log("Parsed points from segment:", newlyParsedPoints);
+          } else {
+              console.log(`No valid points found in segment: "${segment}"`);
+          }
       }
-      setIsProcessing(false); // Parsing is finished
-  }, [points, gradingScale, currentTotal, convertedTotal, speakText]); // Include dependencies
+  }, []); // No dependencies needed for this function itself
 
 
   const startRecording = () => {
@@ -285,7 +302,7 @@ const OralGraderPage: React.FC = () => {
     setPoints([]);
     setCurrentTotal(null);
     setConvertedTotal(null);
-    setTranscribedText('');
+    setCumulativeTranscription('');
     if (isRecording) {
         stopRecording(); // Stop recording if active
     }
@@ -325,10 +342,10 @@ const OralGraderPage: React.FC = () => {
         <CardContent className="text-sm text-blue-600 space-y-1">
           <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p>
           <p>&bull; Cliquez sur "Commencer l'écoute".</p>
-          <p>&bull; Dictez les points. Le navigateur transcrira votre voix après chaque pause significative.</p>
-          <p>&bull; Dictez tous les points pour la copie, séparés par "plus" (ex: "deux plus un et demi plus trois"). Vous pouvez dicter plusieurs séquences.</p>
-          <p>&bull; Dites "OK" pour déclencher l'annonce vocale du total actuel.</p>
-          <p>&bull; Cliquez sur "Arrêter l'écoute" quand vous avez terminé.</p>
+          <p>&bull; Dictez les points. Le navigateur transcrira votre voix par segments.</p>
+          <p>&bull; Dictez les points pour la copie, séparés par "plus" (ex: "deux plus un et demi plus trois"). Vous pouvez dicter plusieurs séquences.</p>
+          <p>&bull; Dites "OK" pour déclencher l'annonce vocale du total actuel (l'enregistrement continue).</p>
+          <p>&bull; Dites "fini" pour arrêter l'enregistrement.</p>
           <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
         </CardContent>
       </Card>
@@ -362,12 +379,12 @@ const OralGraderPage: React.FC = () => {
       {isProcessing && (<p className="text-lg font-semibold text-blue-600 animate-pulse"><Loader2 className="inline-block mr-2 animate-spin" /> Traitement de la transcription...</p>)}
 
 
-      {transcribedText && (
+      {cumulativeTranscription && (
          <Card className="w-full max-w-lg">
-            <CardHeader><CardTitle>Dernière Transcription</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Transcription</CardTitle></CardHeader>
             <CardContent>
-                <ScrollArea className="h-16 border rounded-md p-2 text-sm text-muted-foreground">
-                    <p className="break-words">{transcribedText}</p>
+                <ScrollArea className="h-32 border rounded-md p-2 text-sm text-muted-foreground">
+                    <p className="break-words">{cumulativeTranscription}</p>
                 </ScrollArea>
             </CardContent>
          </Card>
