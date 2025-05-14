@@ -100,7 +100,7 @@ const OralGraderPage: React.FC = () => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false); // State to indicate parsing/command processing
   const [cumulativeTranscription, setCumulativeTranscription] = useState<string>('');
-  const [pendingNumberPart, setPendingNumberPart] = useState<string | null>(null); // State for the number part waiting for 'plus' or command
+  const [pendingNumberPart, setPendingNumberPart] = useState<string | null>(null); // State for the number part waiting for '+' or command
 
   const recognitionRef = useRef<any>(null); // Reference to the SpeechRecognition instance
   const synthesisRef = useRef<any>(null);
@@ -134,15 +134,16 @@ const OralGraderPage: React.FC = () => {
       const potentialFullSequence = pendingNumberPart ? `${pendingNumberPart} ${cleanedSegment}` : cleanedSegment;
       console.log("Combined potential full sequence:", potentialFullSequence);
 
-      const parts = potentialFullSequence.split('plus').map(part => part.trim()).filter(part => part !== '');
-      console.log("Split parts by 'plus' (after trim/filter):", parts);
+      // *** FIX: Split by '+' instead of 'plus' ***
+      const parts = potentialFullSequence.split('+').map(part => part.trim()).filter(part => part !== '');
+      console.log("Split parts by '+' (after trim/filter):", parts);
 
       const newPoints: number[] = [];
       let newPendingPart: string | null = null;
 
       if (parts.length > 1) {
-          console.log("Found 'plus'. Processing parts before the last one.");
-          // We found at least one 'plus'. Process all parts except the last one.
+          console.log("Found '+'. Processing parts before the last one.");
+          // We found at least one '+'. Process all parts except the last one.
           for (let i = 0; i < parts.length - 1; i++) {
               const part = parts[i];
               console.log(`Attempting to parse part ${i}: "${part}"`);
@@ -160,8 +161,8 @@ const OralGraderPage: React.FC = () => {
           console.log("Setting new pending part:", newPendingPart);
 
       } else if (parts.length === 1) {
-          console.log("No 'plus' found. Setting the whole sequence as pending.");
-          // No 'plus' found in the combined sequence. The whole sequence becomes the new pending part.
+          console.log("No '+' found. Setting the whole sequence as pending.");
+          // No '+' found in the combined sequence. The whole sequence becomes the new pending part.
           newPendingPart = parts[0]; // This is the only part
           console.log(`Setting "${newPendingPart}" as pending.`);
       } else {
