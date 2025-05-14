@@ -132,13 +132,62 @@ const OralGraderPage: React.FC = () => {
     synthesisRef.current.speak(utterance);
   }, [synthesisRef.current, showError]); // Dependencies for speakText
 
+  // Function to add points from a sequence string
+  const addPointsFromSequence = useCallback((sequence: string) => {
+      console.log("--- Adding Points from Sequence ---");
+      console.log("Sequence:", sequence);
+
+      if (!sequence.trim()) {
+          console.log("Sequence is empty after trimming. Doing nothing.");
+          return;
+      }
+
+      // *** Clean the sequence before splitting ***
+      // 1. Ensure spaces around '+'
+      let cleanedSequence = sequence.replace(/\+/g, ' + ');
+      // 2. Remove any characters that are not letters, numbers, spaces, or '+'
+      cleanedSequence = cleanedSequence.replace(/[^a-z0-9\s+]/g, '');
+      // 3. Trim leading/trailing spaces and collapse multiple spaces
+      cleanedSequence = cleanedSequence.trim().replace(/\s+/g, ' ');
+
+      console.log("Cleaned sequence before split:", cleanedSequence);
+
+      // Split by '+'
+      const parts = cleanedSequence.split('+').map(part => part.trim()).filter(part => part !== '');
+      console.log("Split parts by '+' (after trim/filter):", parts);
+
+      const newPoints: number[] = [];
+      for (const part of parts) {
+          console.log(`Attempting to parse part: "${part}"`);
+          const parsedNum = parseNumberPart(part);
+          if (parsedNum !== null) {
+              newPoints.push(parsedNum);
+              console.log("Parsed and added point:", parsedNum);
+          } else {
+              showError(`Partie non reconnue comme point : "${part}"`);
+              console.log(`Failed to parse part "${part}" from sequence "${sequence}"`);
+          }
+      }
+
+      if (newPoints.length > 0) {
+          console.log("Adding new points:", newPoints);
+          const updatedPoints = [...pointsRef.current, ...newPoints];
+          pointsRef.current = updatedPoints; // Update ref immediately
+          setPoints(updatedPoints); // Then update state
+      } else {
+          console.log("No new points to add from this sequence.");
+      }
+      console.log("--- End Adding Points from Sequence ---");
+
+  }, [parseNumberPart, showError, setPoints]); // Dependencies
+
+
   // Refactored function to process pending part and update points
   const processPendingPart = useCallback(() => {
       console.log("--- Processing Pending Part ---");
       const partToProcess = pendingNumberPartRef.current; // Capture value before clearing ref
       console.log("Pending part (from ref):", partToProcess);
 
-      let pointsAdded = false;
       if (partToProcess) { // Use captured value
           const parsedNum = parseNumberPart(partToProcess); // Use captured value
           console.log(`Attempting to parse "${partToProcess}" ->`, parsedNum); // Log parse result
@@ -147,100 +196,18 @@ const OralGraderPage: React.FC = () => {
               pointsRef.current = updatedPoints; // Update ref
               setPoints(updatedPoints); // Update state
               console.log("Processed and added pending point:", parsedNum);
-              pointsAdded = true;
           } else {
                showError(`Partie en attente non reconnue : "${partToProcess}"`); // Use captured value
                console.log(`Failed to parse pending part: "${partToProcess}"`); // Use captured value
           }
           pendingNumberPartRef.current = null; // Update ref
           setPendingNumberPart(null); // Update state
+          console.log("Pending part cleared.");
       } else {
           console.log("No pending part to process.");
       }
       console.log("--- End Processing Pending Part ---");
-      return pointsAdded; // Return true if a point was added
   }, [parseNumberPart, showError, setPoints, setPendingNumberPart]);
-
-
-  // Memoized function to process a segment for points
-  const processSegmentForPoints = useCallback((segment: string, shouldLeavePending: boolean) => {
-      console.log("--- Processing Segment for Points ---");
-      console.log("Initial pendingNumberPart (from ref):", pendingNumberPartRef.current); // Use ref
-      console.log("Segment to process:", segment);
-      console.log("Should leave pending:", shouldLeavePending);
-
-      const cleanedSegment = segment.trim();
-      if (!cleanedSegment) {
-          console.log("Segment is empty after cleaning. Doing nothing.");
-          if (!shouldLeavePending) { // If we shouldn't leave pending, clear it
-             pendingNumberPartRef.current = null;
-             setPendingNumberPart(null);
-          }
-          return;
-      }
-
-      // Combine the current pending part (from ref) with the new segment
-      let potentialFullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${cleanedSegment}` : cleanedSegment; // Use ref
-      console.log("Combined potential full sequence:", potentialFullSequence);
-
-      // *** Clean the sequence before splitting ***
-      // 1. Ensure spaces around '+'
-      potentialFullSequence = potentialFullSequence.replace(/\+/g, ' + ');
-      // 2. Remove any characters that are not letters, numbers, spaces, or '+'
-      potentialFullSequence = potentialFullSequence.replace(/[^a-z0-9\s+]/g, '');
-      // 3. Trim leading/trailing spaces and collapse multiple spaces
-      potentialFullSequence = potentialFullSequence.trim().replace(/\s+/g, ' ');
-
-      console.log("Cleaned sequence before split:", potentialFullSequence);
-
-      // Split by '+'
-      const parts = potentialFullSequence.split('+').map(part => part.trim()).filter(part => part !== '');
-      console.log("Split parts by '+' (after trim/filter):", parts);
-
-      const newPoints: number[] = [];
-      let newPendingPart: string | null = null;
-
-      if (parts.length > 0) {
-          const partsToProcess = shouldLeavePending ? parts.slice(0, -1) : parts; // Process all parts if not leaving pending
-          newPendingPart = shouldLeavePending ? parts[parts.length - 1] : null; // Only set pending if requested
-
-          console.log("Parts to process:", partsToProcess);
-          console.log("New pending part will be:", newPendingPart);
-
-
-          for (const part of partsToProcess) {
-              console.log(`Attempting to parse part: "${part}"`);
-              const parsedNum = parseNumberPart(part);
-              if (parsedNum !== null) {
-                  newPoints.push(parsedNum);
-                  console.log("Parsed and added point:", parsedNum);
-              } else {
-                  showError(`Partie non reconnue comme point : "${part}"`);
-                  console.log(`Failed to parse part "${part}" from sequence "${potentialFullSequence}"`);
-              }
-          }
-
-      } else {
-          // parts.length is 0, which means potentialFullSequence was empty after trim/filter.
-          console.log("Processed segment resulted in no parts.");
-          newPendingPart = null; // Always clear pending if no parts resulted
-      }
-
-      // Update state and ref
-      if (newPoints.length > 0) {
-          console.log("Adding new points:", newPoints);
-          const updatedPoints = [...pointsRef.current, ...newPoints];
-          pointsRef.current = updatedPoints; // Update ref immediately
-          setPoints(updatedPoints); // Then update state
-      } else {
-          console.log("No new points to add.");
-      }
-      console.log("Updating pendingNumberPart state/ref to:", newPendingPart);
-      pendingNumberPartRef.current = newPendingPart; // Update ref immediately
-      setPendingNumberPart(newPendingPart); // Then update state
-      console.log("--- End Processing Segment for Points ---");
-
-  }, [parseNumberPart, showError, setPoints, setPendingNumberPart]); // Dependencies updated
 
 
   // Initialize Speech Synthesis and check for Speech Recognition support
@@ -304,15 +271,17 @@ const OralGraderPage: React.FC = () => {
                 console.log(`Command '${command}' detected.`);
                 console.log(`Part before command: "${preCommandPart}"`);
 
-                // Process the part of the segment *before* the command, ensuring ALL parts are processed
-                // and no new pending part is left from this sequence.
-                processSegmentForPoints(preCommandPart, false); // Pass false for shouldLeavePending
+                // Combine existing pending part with the part before the command
+                const fullSequenceToProcess = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${preCommandPart}` : preCommandPart;
+                console.log("Full sequence to process before command:", fullSequenceToProcess);
 
-                // Now, process any number part that was pending *before* this segment arrived.
-                // This handles cases like "5 plus [pause] 3 ok" where 3 was pending from the previous segment.
-                // Note: processPendingPart already clears the pending part.
-                processPendingPart();
+                // Process this full sequence to add all points
+                addPointsFromSequence(fullSequenceToProcess);
 
+                // Clear the pending part state and ref
+                pendingNumberPartRef.current = null;
+                setPendingNumberPart(null);
+                console.log("Pending part cleared after command.");
 
                 // Execute command action
                 if (command === "fini") {
@@ -338,10 +307,44 @@ const OralGraderPage: React.FC = () => {
                 return; // Stop processing this result further
             }
 
-            // If no command was detected, process the entire segment for potential points,
-            // allowing the last part to be left pending if it doesn't end with '+'.
-            processSegmentForPoints(latestTranscript, true); // Pass true for shouldLeavePending
-            setIsProcessing(false); // Processing finished
+            // If no command was detected, process the segment normally
+            // Combine existing pending part with the new segment
+            let fullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${latestTranscript}` : latestTranscript;
+            console.log("Full sequence for standard processing:", fullSequence);
+
+            // *** Clean the sequence before splitting ***
+            // 1. Ensure spaces around '+'
+            let cleanedSequence = fullSequence.replace(/\+/g, ' + ');
+            // 2. Remove any characters that are not letters, numbers, spaces, or '+'
+            cleanedSequence = cleanedSequence.replace(/[^a-z0-9\s+]/g, '');
+            // 3. Trim leading/trailing spaces and collapse multiple spaces
+            cleanedSequence = cleanedSequence.trim().replace(/\s+/g, ' ');
+
+            console.log("Cleaned sequence before split:", cleanedSequence);
+
+            // Split by '+'
+            const parts = cleanedSequence.split('+').map(part => part.trim()).filter(part => part !== '');
+            console.log("Split parts by '+' (after trim/filter):", parts);
+
+            const partsToProcess = parts.slice(0, -1); // All parts except the last one
+            const newPendingPart = parts.length > 0 ? parts[parts.length - 1] : null; // The very last part is the new pending part
+
+            console.log("Parts to process (before last):", partsToProcess);
+            console.log("New pending part set to:", newPendingPart);
+
+            // Add points from partsToProcess
+            if (partsToProcess.length > 0) {
+                 addPointsFromSequence(partsToProcess.join(' + ')); // Join back with '+' for addPointsFromSequence
+            }
+
+
+            // Update pending part state and ref
+            pendingNumberPartRef.current = newPendingPart;
+            setPendingNumberPart(newPendingPart);
+            console.log("Pending part updated to:", newPendingPart);
+
+
+            setIsProcessing(false);
             console.log("--- End onresult (Processed Segment) ---");
         };
 
@@ -356,6 +359,8 @@ const OralGraderPage: React.FC = () => {
         recognitionRef.current.onend = () => {
             dismissToast();
             console.log("Speech recognition ended.");
+            // Process any remaining pending part when recording stops
+            processPendingPart();
             setIsRecording(false);
             setIsProcessing(false);
         };
@@ -370,7 +375,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [speakText, processSegmentForPoints, processPendingPart, showError, showLoading, dismissToast, setIsRecording, setIsProcessing, setCumulativeTranscription, setPoints, setCurrentTotal, setConvertedTotal, setPendingNumberPart]); // Dependencies updated
+  }, [speakText, addPointsFromSequence, processPendingPart, showError, showLoading, dismissToast, setIsRecording, setIsProcessing, setCumulativeTranscription, setPoints, setCurrentTotal, setConvertedTotal, setPendingNumberPart]); // Dependencies updated
 
 
   // Update numeric gradingScale when input string changes
