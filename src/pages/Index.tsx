@@ -135,11 +135,13 @@ const OralGraderPage: React.FC = () => {
   // Refactored function to process pending part and update points
   const processPendingPart = useCallback(() => {
       console.log("--- Processing Pending Part ---");
-      console.log("Pending part (from ref):", pendingNumberPartRef.current);
+      const partToProcess = pendingNumberPartRef.current; // Capture value before clearing ref
+      console.log("Pending part (from ref):", partToProcess);
 
       let pointsAdded = false;
-      if (pendingNumberPartRef.current) { // Use ref
-          const parsedNum = parseNumberPart(pendingNumberPartRef.current); // Use ref
+      if (partToProcess) { // Use captured value
+          const parsedNum = parseNumberPart(partToProcess); // Use captured value
+          console.log(`Attempting to parse "${partToProcess}" ->`, parsedNum); // Log parse result
           if (parsedNum !== null) {
               const updatedPoints = [...pointsRef.current, parsedNum];
               pointsRef.current = updatedPoints; // Update ref
@@ -147,8 +149,8 @@ const OralGraderPage: React.FC = () => {
               console.log("Processed and added pending point:", parsedNum);
               pointsAdded = true;
           } else {
-               showError(`Partie en attente non reconnue : "${pendingNumberPartRef.current}"`); // Use ref
-               console.log(`Failed to parse pending part: "${pendingNumberPartRef.current}"`); // Use ref
+               showError(`Partie en attente non reconnue : "${partToProcess}"`); // Use captured value
+               console.log(`Failed to parse pending part: "${partToProcess}"`); // Use captured value
           }
           pendingNumberPartRef.current = null; // Update ref
           setPendingNumberPart(null); // Update state
@@ -194,12 +196,15 @@ const OralGraderPage: React.FC = () => {
       const newPoints: number[] = [];
       let newPendingPart: string | null = null;
 
-      if (parts.length > 1) {
-          console.log("Found '+'. Processing parts before the last one.");
-          // We found at least one '+'. Process all parts except the last one.
-          for (let i = 0; i < parts.length - 1; i++) {
-              const part = parts[i];
-              console.log(`Attempting to parse part ${i}: "${part}"`);
+      if (parts.length > 0) { // Process all parts except the very last one
+          const partsToProcess = parts.slice(0, -1); // All parts except the last one
+          newPendingPart = parts[parts.length - 1]; // The very last part is the new pending part
+
+          console.log("Parts to process (before last):", partsToProcess);
+          console.log("New pending part set to:", newPendingPart);
+
+          for (const part of partsToProcess) {
+              console.log(`Attempting to parse part: "${part}"`);
               const parsedNum = parseNumberPart(part);
               if (parsedNum !== null) {
                   newPoints.push(parsedNum);
@@ -209,15 +214,7 @@ const OralGraderPage: React.FC = () => {
                   console.log(`Failed to parse part "${part}" from sequence "${potentialFullSequence}"`);
               }
           }
-          // The last part is the new pending part
-          newPendingPart = parts[parts.length - 1];
-          console.log("Setting new pending part:", newPendingPart);
 
-      } else if (parts.length === 1) {
-          console.log("No '+' found. Setting the whole sequence as pending.");
-          // No '+' found in the combined sequence. The whole sequence becomes the new pending part.
-          newPendingPart = parts[0]; // This is the only part
-          console.log(`Setting "${newPendingPart}" as pending.`);
       } else {
           // parts.length is 0, which means potentialFullSequence was empty after trim/filter.
           console.log("Processed segment resulted in no parts.");
