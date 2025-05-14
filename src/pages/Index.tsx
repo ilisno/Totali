@@ -260,13 +260,36 @@ const OralGraderPage: React.FC = () => {
             // Update cumulative transcription state with lowercase transcript
             setCumulativeTranscription(prev => prev + latestTranscript + ' ');
 
-            // Check for commands using regex with word boundaries
-            const commandRegex = /\b(fini|ok|okay|compte)\b/;
-            const commandMatch = latestTranscript.match(commandRegex);
+            // --- Flexible Command Detection ---
+            const commands = ["fini", "ok", "okay", "compte"];
+            let detectedCommand = null;
+            let commandIndex = -1;
 
-            if (commandMatch) {
-                const command = commandMatch[1]; // The matched command word
-                const preCommandPart = latestTranscript.substring(0, commandMatch.index).trim(); // Part before the command
+            for (const cmd of commands) {
+              const index = latestTranscript.indexOf(cmd);
+              if (index !== -1) {
+                // Check if it's likely the end of a command (space after or end, or period after)
+                const charAfter = index + cmd.length < latestTranscript.length ? latestTranscript[index + cmd.length] : ' ';
+                const isLikelyCommandEnd = charAfter === ' ' || charAfter === '.' || index + cmd.length === latestTranscript.length;
+
+                // Simple check to avoid matching inside words like "book" - ensure char before is not a letter
+                const charBefore = index > 0 ? latestTranscript[index - 1] : ' ';
+                // Use Unicode property escape \P{L} to match any character that is NOT a letter
+                const isLikelyCommandStart = !/\p{L}/u.test(charBefore);
+
+                if (isLikelyCommandEnd && isLikelyCommandStart) {
+                     detectedCommand = cmd;
+                     commandIndex = index;
+                     break; // Found the first valid command
+                }
+              }
+            }
+            // --- End Flexible Command Detection ---
+
+
+            if (detectedCommand) {
+                const command = detectedCommand;
+                const preCommandPart = latestTranscript.substring(0, commandIndex).trim(); // Part before the command
 
                 console.log(`Command '${command}' detected.`);
                 console.log(`Part before command: "${preCommandPart}"`);
