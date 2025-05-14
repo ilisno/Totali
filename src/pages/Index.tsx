@@ -17,7 +17,7 @@ declare global {
 }
 
 const numberWords: { [key: string]: string } = {
-  'zéro': '0', 'zero': '0', 'un': '1', 'deux': '2', 'trois': '3',
+  'zéro': '0', 'zero': '0', 'un': '1', 'en': '1', 'deux': '2', 'trois': '3',
   'quatre': '4', 'cinq': '5', 'six': '6', 'sept': '7', 'huit': '8',
   'neuf': '9', 'dix': '10', 'onze': '11', 'douze': '12', 'treize': '13',
   'quatorze': '14', 'quinze': '15', 'seize': '16', 'de': '2', // 'de' might be misrecognized for 'deux'
@@ -102,8 +102,20 @@ const OralGraderPage: React.FC = () => {
   const [cumulativeTranscription, setCumulativeTranscription] = useState<string>('');
   const [pendingNumberPart, setPendingNumberPart] = useState<string | null>(null); // State for the number part waiting for '+' or command
 
+  // Refs to hold the latest state values for event handlers
+  const pointsRef = useRef<number[]>([]);
+  const pendingNumberPartRef = useRef<string | null>(null);
+  const gradingScaleRef = useRef<number>(20);
+
+
   const recognitionRef = useRef<any>(null); // Reference to the SpeechRecognition instance
   const synthesisRef = useRef<any>(null);
+
+  // Update refs whenever state changes
+  useEffect(() => { pointsRef.current = points; }, [points]);
+  useEffect(() => { pendingNumberPartRef.current = pendingNumberPart; }, [pendingNumberPart]);
+  useEffect(() => { gradingScaleRef.current = gradingScale; }, [gradingScale]);
+
 
   // Memoize speakText using useCallback
   const speakText = useCallback((text: string) => {
@@ -121,7 +133,7 @@ const OralGraderPage: React.FC = () => {
   // Memoize processTranscriptionSegment using useCallback
   const processTranscriptionSegment = useCallback((segment: string) => {
       console.log("--- Processing Segment ---");
-      console.log("Initial pendingNumberPart (inside useCallback):", pendingNumberPart);
+      console.log("Initial pendingNumberPart (from ref):", pendingNumberPartRef.current); // Use ref
       console.log("Latest segment:", segment);
 
       const cleanedSegment = segment.trim().toLowerCase();
@@ -130,11 +142,11 @@ const OralGraderPage: React.FC = () => {
           return; // Ignore empty segments
       }
 
-      // Combine the current pending part with the new segment
-      const potentialFullSequence = pendingNumberPart ? `${pendingNumberPart} ${cleanedSegment}` : cleanedSegment;
+      // Combine the current pending part (from ref) with the new segment
+      const potentialFullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${cleanedSegment}` : cleanedSegment; // Use ref
       console.log("Combined potential full sequence:", potentialFullSequence);
 
-      // *** FIX: Split by '+' instead of 'plus' ***
+      // Split by '+'
       const parts = potentialFullSequence.split('+').map(part => part.trim()).filter(part => part !== '');
       console.log("Split parts by '+' (after trim/filter):", parts);
 
@@ -171,18 +183,21 @@ const OralGraderPage: React.FC = () => {
           newPendingPart = null; // Clear pending if somehow empty
       }
 
-      // Update state
+      // Update state and ref
       if (newPoints.length > 0) {
           console.log("Adding new points:", newPoints);
-          setPoints(prev => [...prev, ...newPoints]);
+          const updatedPoints = [...pointsRef.current, ...newPoints];
+          pointsRef.current = updatedPoints; // Update ref immediately
+          setPoints(updatedPoints); // Then update state
       } else {
           console.log("No new points to add.");
       }
-      console.log("Updating pendingNumberPart state to:", newPendingPart);
-      setPendingNumberPart(newPendingPart);
+      console.log("Updating pendingNumberPart state/ref to:", newPendingPart);
+      pendingNumberPartRef.current = newPendingPart; // Update ref immediately
+      setPendingNumberPart(newPendingPart); // Then update state
       console.log("--- End Processing Segment ---");
 
-  }, [pendingNumberPart, setPoints, setPendingNumberPart, showError]); // Dependencies for processTranscriptionSegment
+  }, [parseNumberPart, showError, setPoints, setPendingNumberPart]); // Dependencies updated
 
 
   // Initialize Speech Synthesis and check for Speech Recognition support
@@ -211,6 +226,8 @@ const OralGraderPage: React.FC = () => {
             setCurrentTotal(null); // Clear totals
             setConvertedTotal(null);
             setPendingNumberPart(null); // Clear pending part
+            pointsRef.current = []; // Clear refs too
+            pendingNumberPartRef.current = null;
             showLoading("Enregistrement en cours... Dites les points ou 'OK' ou 'fini'.");
         };
 
@@ -223,12 +240,10 @@ const OralGraderPage: React.FC = () => {
 
             console.log("--- onresult ---");
             console.log("Latest segment transcription:", latestTranscript);
-            console.log("State before processing (inside onresult):");
-            console.log("  points:", points);
-            console.log("  currentTotal:", currentTotal);
-            console.log("  convertedTotal:", convertedTotal);
-            console.log("  pendingNumberPart:", pendingNumberPart);
-            console.log("  gradingScale:", gradingScale);
+            console.log("State before processing (from refs):"); // Indicate using refs
+            console.log("  points:", pointsRef.current); // Use ref
+            console.log("  pendingNumberPart:", pendingNumberPartRef.current); // Use ref
+            console.log("  gradingScale:", gradingScaleRef.current); // Use ref
 
 
             // Update cumulative transcription state
@@ -240,16 +255,19 @@ const OralGraderPage: React.FC = () => {
             if (cleanedLatestTranscript === "fini") {
                 console.log("'Fini' command detected.");
                 // Process any pending part before stopping
-                if (pendingNumberPart) {
-                    const parsedNum = parseNumberPart(pendingNumberPart);
+                if (pendingNumberPartRef.current) { // Use ref
+                    const parsedNum = parseNumberPart(pendingNumberPartRef.current); // Use ref
                     if (parsedNum !== null) {
-                        setPoints(prev => [...prev, parsedNum]);
+                        const updatedPoints = [...pointsRef.current, parsedNum];
+                        pointsRef.current = updatedPoints; // Update ref
+                        setPoints(updatedPoints); // Update state
                         console.log("Processed pending part on 'fini':", parsedNum);
                     } else {
-                         showError(`Partie en attente non reconnue avant 'fini' : "${pendingNumberPart}"`);
-                         console.log(`Failed to parse pending part on 'fini': "${pendingNumberPart}"`);
+                         showError(`Partie en attente non reconnue avant 'fini' : "${pendingNumberPartRef.current}"`); // Use ref
+                         console.log(`Failed to parse pending part on 'fini': "${pendingNumberPartRef.current}"`); // Use ref
                     }
-                    setPendingNumberPart(null); // Clear pending part
+                    pendingNumberPartRef.current = null; // Update ref
+                    setPendingNumberPart(null); // Update state
                 }
                 recognitionRef.current.stop(); // Stop the recognition
                 showSuccess("Enregistrement terminé.");
@@ -261,28 +279,32 @@ const OralGraderPage: React.FC = () => {
             if (cleanedLatestTranscript === "ok" || cleanedLatestTranscript === "okay") {
                  console.log("'OK' command detected.");
                  // Process any pending part before announcing total
-                 let currentPoints = points; // Use current state value
-                 if (pendingNumberPart) {
-                     const parsedNum = parseNumberPart(pendingNumberPart);
+                 let currentPoints = pointsRef.current; // Start with points from ref
+                 if (pendingNumberPartRef.current) { // Use ref
+                     const parsedNum = parseNumberPart(pendingNumberPartRef.current); // Use ref
                      if (parsedNum !== null) {
-                         currentPoints = [...points, parsedNum]; // Create new array with pending point
-                         setPoints(currentPoints); // Update state
+                         const updatedPoints = [...pointsRef.current, parsedNum];
+                         pointsRef.current = updatedPoints; // Update ref
+                         setPoints(updatedPoints); // Update state
+                         currentPoints = updatedPoints; // Update local variable for sum calculation
                          console.log("Processed pending part on 'OK':", parsedNum);
                      } else {
-                         showError(`Partie en attente non reconnue avant 'OK' : "${pendingNumberPart}"`);
-                         console.log(`Failed to parse pending part on 'OK': "${pendingNumberPart}"`);
+                         showError(`Partie en attente non reconnue avant 'OK' : "${pendingNumberPartRef.current}"`); // Use ref
+                         console.log(`Failed to parse pending part on 'OK': "${pendingNumberPartRef.current}"`); // Use ref
                      }
-                     setPendingNumberPart(null); // Clear pending part
+                     pendingNumberPartRef.current = null; // Update ref
+                     setPendingNumberPart(null); // Update state
                  }
 
                  if (currentPoints.length === 0) {
                     speakText("Aucun point n'a été dicté.");
                     showError("Aucun point n'a été dicté avant 'OK'.");
                  } else {
-                    // Recalculate total based on potentially updated points state
-                    const sum = currentPoints.reduce((acc, p) => acc + p, 0);
-                    const converted = gradingScale !== 20 ? parseFloat(((sum / gradingScale) * 20).toFixed(1)) : null;
-                    const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScale}`;
+                    // Recalculate total based on potentially updated points state (or ref)
+                    const sum = currentPoints.reduce((acc, p) => acc + p, 0); // Use the potentially updated currentPoints
+                    // Use gradingScaleRef.current here
+                    const converted = gradingScaleRef.current !== 20 ? parseFloat(((sum / gradingScaleRef.current) * 20).toFixed(1)) : null;
+                    const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScaleRef.current}`; // Use ref in announcement text too
                     speakText(announcement);
                     showSuccess("Annonce du total actuel.");
                  }
@@ -292,7 +314,7 @@ const OralGraderPage: React.FC = () => {
             }
 
             // If not a command, process as potential points
-            processTranscriptionSegment(latestTranscript);
+            processTranscriptionSegment(latestTranscript); // This function now uses refs internally
             setIsProcessing(false); // Processing finished
             console.log("--- End onresult (Processed Segment) ---");
         };
@@ -322,7 +344,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [points, currentTotal, convertedTotal, pendingNumberPart, gradingScale, speakText, processTranscriptionSegment, setPoints, setPendingNumberPart, showError]); // Updated dependencies
+  }, [speakText, processTranscriptionSegment, showError, showLoading, dismissToast, setIsRecording, setIsProcessing, setCumulativeTranscription, setPoints, setCurrentTotal, setConvertedTotal, setPendingNumberPart]); // Dependencies updated
 
 
   // Update numeric gradingScale when input string changes
@@ -330,21 +352,23 @@ const OralGraderPage: React.FC = () => {
     const parsedScale = parseFloat(gradingScaleInput);
     if (!isNaN(parsedScale) && parsedScale > 0) {
       setGradingScale(parsedScale);
+      gradingScaleRef.current = parsedScale; // Update ref here
     } else {
       console.warn("Invalid scale input:", gradingScaleInput);
+      // Optionally reset gradingScale/gradingScaleRef.current to a default or previous valid value here if input becomes invalid
     }
-  }, [gradingScaleInput]);
+  }, [gradingScaleInput, setGradingScale]); // Added setGradingScale dependency
 
   // Effect to update total and converted total whenever points change
   useEffect(() => {
-      const sum = points.reduce((acc, p) => acc + p, 0);
+      const sum = points.reduce((acc, p) => acc + p, 0); // Use state here as this effect reacts to state changes
       setCurrentTotal(sum);
-      if (gradingScale !== 20) {
-          setConvertedTotal(parseFloat(((sum / gradingScale) * 20).toFixed(1)));
+      if (gradingScaleRef.current !== 20) { // Use ref for grading scale
+          setConvertedTotal(parseFloat(((sum / gradingScaleRef.current) * 20).toFixed(1)));
       } else {
           setConvertedTotal(null);
       }
-  }, [points, gradingScale]); // Recalculate when points or gradingScale change
+  }, [points, setCurrentTotal, setConvertedTotal]); // Dependencies are points and the setters
 
 
   const startRecording = () => {
@@ -352,14 +376,15 @@ const OralGraderPage: React.FC = () => {
         showError("Reconnaissance vocale non supportée par ce navigateur.");
         return;
     }
-    if (gradingScale <= 0 || isNaN(gradingScale)) {
+    // Use ref for the check before starting
+    if (gradingScaleRef.current <= 0 || isNaN(gradingScaleRef.current)) {
         showError("Veuillez entrer un barème valide (nombre positif).");
         return;
     }
 
     try {
       recognitionRef.current.start();
-      // States are updated in onstart handler
+      // States and refs are updated in onstart handler
     } catch (error) {
       console.error("Error starting speech recognition:", error);
       showError("Erreur lors du démarrage de la reconnaissance vocale.");
@@ -382,6 +407,8 @@ const OralGraderPage: React.FC = () => {
     setConvertedTotal(null);
     setCumulativeTranscription('');
     setPendingNumberPart(null); // Clear pending part on new copy
+    pointsRef.current = []; // Clear refs too
+    pendingNumberPartRef.current = null;
     if (isRecording) {
         stopRecording(); // Stop recording if active
     }
@@ -389,6 +416,7 @@ const OralGraderPage: React.FC = () => {
   };
 
   // Determine button state and text
+  // Use state values for UI rendering
   const isButtonDisabled = !recognitionRef.current || isProcessing || gradingScale <= 0 || isNaN(gradingScale);
   const buttonText = isRecording ? "Arrêter l'écoute" : (isProcessing ? "Traitement..." : "Commencer l'écoute");
   const buttonIcon = isRecording ? <MicOff className="mr-2 h-4 w-4" /> : (isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mic className="mr-2 h-4 w-4" />);
