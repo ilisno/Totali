@@ -5,12 +5,13 @@ import { Input } from "@/components/ui/input"; // Import Input
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { showError, showSuccess, showLoading, dismissToast } from '@/utils/toast';
-import { Mic, MicOff, FilePlus2, Volume2, Info } from 'lucide-react';
+import { Mic, MicOff, FilePlus2, Volume2, Info, Loader2 } from 'lucide-react'; // Added Loader2 icon
+
+// Import Whisper WebAssembly library
+import { initialize } from '@whisper-at/whisper-web';
 
 declare global {
   interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
     SpeechSynthesisUtterance: any;
     speechSynthesis: any;
   }
@@ -90,27 +91,66 @@ const parseNumberPart = (part: string): number | null => {
 
 
 const OralGraderPage: React.FC = () => {
-  // Use state for the input string and the parsed number
   const [gradingScaleInput, setGradingScaleInput] = useState<string>('20');
-  const [gradingScale, setGradingScale] = useState<number>(20); // Numeric value used for calculations
+  const [gradingScale, setGradingScale] = useState<number>(20);
 
-  const [points, setPoints] = useState<number[]>([]); // Stores individual points
+  const [points, setPoints] = useState<number[]>([]);
   const [currentTotal, setCurrentTotal] = useState<number | null>(null);
   const [convertedTotal, setConvertedTotal] = useState<number | null>(null);
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [isSupported, setIsSupported] = useState<boolean>(true);
 
-  const recognitionRef = useRef<any>(null);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [modelLoadingProgress, setModelLoadingProgress] = useState<number | null>(null);
+  const [modelLoaded, setModelLoaded] = useState<boolean>(false);
+  const [transcribedText, setTranscribedText] = useState<string>(''); // To display the raw transcription
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const whisperProcessorRef = useRef<any>(null); // Reference to the Whisper processor
   const synthesisRef = useRef<any>(null);
-  const isListeningRef = useRef(isListening);
-  const listeningToastId = useRef<string | number | null>(null);
-  const lastProcessedTranscriptRef = useRef(''); // Ref to store the last successfully processed final transcript
 
+  // Model path - Make sure tiny-fr.bin is in your public folder
+  const modelPath = '/tiny-fr.bin'; // Or '/base-fr.bin' etc.
 
-  // Update isListeningRef whenever isListening changes
+  // Initialize Whisper processor and load model
   useEffect(() => {
-    isListeningRef.current = isListening;
-  }, [isListening]);
+    const loadModel = async () => {
+      setModelLoadingProgress(0);
+      try {
+        const processor = await initialize(modelPath, (progress) => {
+          setModelLoadingProgress(Math.round(progress * 100));
+        });
+        whisperProcessorRef.current = processor;
+        setModelLoaded(true);
+        setModelLoadingProgress(null); // Hide progress bar
+        showSuccess("Modèle Whisper chargé !");
+      } catch (error) {
+        console.error("Error loading Whisper model:", error);
+        showError("Erreur lors du chargement du modèle Whisper.");
+        setModelLoadingProgress(null);
+      }
+    };
+
+    if (!whisperProcessorRef.current && !modelLoaded) {
+      loadModel();
+    }
+
+    // Initialize Speech Synthesis
+    if ('speechSynthesis' in window) {
+        synthesisRef.current = window.speechSynthesis;
+    } else {
+        console.warn("Speech Synthesis not supported in this browser.");
+    }
+
+
+    // Cleanup function
+    return () => {
+        // No explicit destroy for whisper-web processor needed based on docs
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
+    };
+  }, []); // Empty dependency array means this runs once on mount
 
   // Update numeric gradingScale when input string changes
   useEffect(() => {
@@ -118,10 +158,7 @@ const OralGraderPage: React.FC = () => {
     if (!isNaN(parsedScale) && parsedScale > 0) {
       setGradingScale(parsedScale);
     } else {
-      // If input is invalid, maybe default to 20 or show an error
-      // For now, let's just log and keep the previous valid scale
       console.warn("Invalid scale input:", gradingScaleInput);
-      // setGradingScale(20); // Option to reset to 20 on invalid input
     }
   }, [gradingScaleInput]);
 
@@ -138,234 +175,192 @@ const OralGraderPage: React.FC = () => {
 
 
   const speakText = useCallback((text: string) => {
-    if (!synthesisRef.current || !isSupported) return;
-    synthesisRef.current.cancel();
+    if (!synthesisRef.current) {
+        console.warn("Speech Synthesis not available.");
+        showError("Synthèse vocale non supportée.");
+        return;
+    }
+    synthesisRef.current.cancel(); // Stop any ongoing speech
     const utterance = new window.SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
+    utterance.lang = 'fr-FR'; // Set language to French
     synthesisRef.current.speak(utterance);
-  }, [isSupported]);
+  }, []);
 
-  const handleRecognitionResultCallback = useCallback((event: any) => {
-    // Dismiss loading toast once any result comes in
-    if (listeningToastId.current) {
-      dismissToast(listeningToastId.current);
-      listeningToastId.current = null;
+  const startRecording = async () => {
+    if (!modelLoaded) {
+        showError("Le modèle Whisper n'est pas encore chargé.");
+        return;
     }
-
-    // Process all new final results starting from event.resultIndex
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const result = event.results[i];
-        if (result.isFinal) {
-            const finalTranscript = result[0].transcript.trim();
-
-            // Check if this specific final transcript has already been processed
-            if (finalTranscript === lastProcessedTranscriptRef.current) {
-                console.log('Ignoring duplicate final transcript:', finalTranscript);
-                continue; // Skip this specific duplicate final result
-            }
-
-            // Update the last processed transcript *before* processing
-            lastProcessedTranscriptRef.current = finalTranscript;
-
-            console.log('Processing new final transcript:', finalTranscript);
-
-            const initialProcessedText = finalTranscript.toLowerCase();
-
-            let commandCheckText = initialProcessedText;
-            if (commandCheckText.endsWith('.')) {
-              commandCheckText = commandCheckText.slice(0, -1);
-            }
-
-            if (commandCheckText === "ok" || commandCheckText === "okay") {
-              if (points.length === 0) {
-                showError("Aucun point n'a été dicté avant 'OK'.");
-                setIsListening(false); // Stop listening
-                return; // Stop processing this event
-              }
-              // Total is already calculated in useEffect based on points state
-              const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
-              speakText(announcement);
-
-              setIsListening(false); // Stop listening
-              showSuccess("Calcul du total terminé.");
-              lastProcessedTranscriptRef.current = ''; // Reset after OK command so a new dictation can start fresh
-              return; // Stop processing this event after OK
-            } else {
-              // Process for number parsing, potentially multiple numbers separated by "plus"
-              const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
-
-              if (parts.length === 0) {
-                  // This might be a non-number word or phrase that isn't "ok" and doesn't contain 'plus'
-                  // We can ignore it or show a non-critical message
-                  console.log(`Transcript "${finalTranscript}" is not 'ok' and contains no 'plus' separator.`);
-                  // Optionally show a subtle message or log:
-                  // showError(`Non reconnu : "${finalTranscript}"`);
-                  continue; // Don't add points if no parts found, but continue checking other final results in the event
-              }
-
-              let anyPartParsedSuccessfully = false;
-              const newlyParsedPoints: number[] = [];
-
-              parts.forEach(part => {
-                  const parsedNum = parseNumberPart(part);
-                  if (parsedNum !== null) {
-                    newlyParsedPoints.push(parsedNum);
-                    anyPartParsedSuccessfully = true;
-                  } else {
-                    // Only show error if parsing failed for this specific part
-                    showError(`Point non reconnu dans la séquence "${finalTranscript}" : "${part}"`);
-                    console.log(`Failed to parse part: original="${finalTranscript}", part="${part}"`);
-                  }
-              });
-
-              if (anyPartParsedSuccessfully) {
-                  setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points to the list
-                  // Total calculation happens in the useEffect triggered by setPoints
-              } else {
-                  // If the phrase had parts but none were parsed successfully
-                  showError(`Aucun point valide trouvé dans la séquence : "${finalTranscript}"`);
-              }
-            }
-        }
-    }
-  }, [points, gradingScale, speakText, setIsListening, currentTotal, convertedTotal]); // Added currentTotal, convertedTotal to dependencies for speakText in OK command
-
-  const handleRecognitionResultRef = useRef(handleRecognitionResultCallback);
-  useEffect(() => {
-    handleRecognitionResultRef.current = handleRecognitionResultCallback;
-  }, [handleRecognitionResultCallback]);
-
-  useEffect(() => {
-    if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) || !('speechSynthesis' in window)) {
-      setIsSupported(false);
-      showError("Votre navigateur ne supporte pas la reconnaissance ou la synthèse vocale.");
-      return;
-    }
-    setIsSupported(true);
-
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true; // Set to true for continuous listening
-    recognition.interimResults = true; // We need interim results to build the final transcript
-    recognition.lang = 'fr-FR';
-
-    recognition.onresult = (event) => handleRecognitionResultRef.current(event);
-
-    recognition.onerror = (event: any) => {
-      if (listeningToastId.current) {
-        dismissToast(listeningToastId.current);
-        listeningToastId.current = null;
-      }
-      console.error('Speech recognition error', event.error);
-      let errorMessage = "Erreur de reconnaissance vocale";
-      if (event.error === 'no-speech') {
-         // No need to show error toast for no-speech in continuous mode, it just means silence
-         console.warn('Speech recognition: no speech detected.');
-      } else if (event.error === 'audio-capture') {
-        errorMessage = "Problème avec le microphone."; setIsListening(false);
-      } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        errorMessage = "Permission microphone refusée."; setIsListening(false);
-      } else if (event.error === 'network') {
-        errorMessage = "Erreur réseau."; setIsListening(false);
-      } else {
-         errorMessage = `Erreur: ${event.error}`; setIsListening(false);
-      }
-      if (event.error !== 'no-speech') showError(errorMessage);
-    };
-
-    recognition.onend = () => {
-      // In continuous mode, onend might fire less often or after long pauses.
-      // We still want to restart if we are supposed to be listening.
-      console.log("Recognition ended. isListeningRef.current:", isListeningRef.current);
-      if (isListeningRef.current) {
-        try {
-            console.log("Attempting to restart recognition...");
-            recognition.start();
-        } catch (e) {
-            console.error("Recognition failed to restart in onend:", e);
-            showError("Reconnaissance arrêtée. Veuillez réessayer.");
-            setIsListening(false);
-        }
-      } else {
-          console.log("Recognition ended as expected (isListening is false).");
-      }
-    };
-    
-    recognitionRef.current = recognition;
-    synthesisRef.current = window.speechSynthesis;
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.onresult = null;
-        recognitionRef.current.onerror = null;
-        recognitionRef.current.onend = null;
-        recognitionRef.current.stop(); // Stop recognition when component unmounts or effect re-runs
-      }
-      if (synthesisRef.current) synthesisRef.current.cancel();
-      if (listeningToastId.current) dismissToast(listeningToastId.current);
-    };
-  }, [isSupported, setIsListening]); // Effect depends on isSupported and setIsListening
-
-  const toggleListening = () => {
-    if (!isSupported) { showError("Fonctionnalité non supportée."); return; }
     if (gradingScale <= 0 || isNaN(gradingScale)) {
         showError("Veuillez entrer un barème valide (nombre positif).");
         return;
     }
 
-    if (isListening) {
-      setIsListening(false); // This will set isListeningRef.current to false
-      if (recognitionRef.current) {
-          recognitionRef.current.stop(); // Explicitly stop recognition
-      }
-      if (listeningToastId.current) { dismissToast(listeningToastId.current); listeningToastId.current = null; }
-      showSuccess("Dictée arrêtée.");
-    } else {
-      if (currentTotal !== null) { setPoints([]); setCurrentTotal(null); setConvertedTotal(null); }
-      // Reset the last processed transcript when starting a new dictation
-      lastProcessedTranscriptRef.current = '';
-      setIsListening(true);
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-          if (listeningToastId.current) dismissToast(listeningToastId.current);
-          listeningToastId.current = showLoading("J'écoute... Dites les points séparés par \"plus\" ou dites \"OK\".");
-        } catch (e) {
-          console.error("Error starting recognition:", e);
-          showError("Impossible de démarrer la reconnaissance.");
-          setIsListening(false);
-        }
-      }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        setIsRecording(false);
+        setIsProcessing(true);
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        audioChunksRef.current = []; // Clear chunks
+
+        // Process the audio blob with Whisper
+        await processAudio(audioBlob);
+
+        // Stop microphone stream tracks
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setTranscribedText(''); // Clear previous transcription
+      // Clear points and totals when starting a new recording session
+      setPoints([]);
+      setCurrentTotal(null);
+      setConvertedTotal(null);
+      showLoading("Enregistrement en cours... Cliquez à nouveau pour arrêter.");
+
+    } catch (error) {
+      console.error("Error starting recording:", error);
+      showError("Impossible d'accéder au microphone. Vérifiez les permissions.");
+      setIsRecording(false);
+      setIsProcessing(false);
     }
   };
 
-  const handleNewCopy = () => {
-    setPoints([]); setCurrentTotal(null); setConvertedTotal(null);
-    if (isListening) {
-        setIsListening(false); // This will set isListeningRef.current to false
-        if (recognitionRef.current) recognitionRef.current.stop(); // Explicitly stop recognition
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      // onstop event handler will set isRecording(false) and start processing
     }
-    // Reset the last processed transcript when starting a new copy
-    lastProcessedTranscriptRef.current = '';
-    if (listeningToastId.current) { dismissToast(listeningToastId.current); listeningToastId.current = null; }
+  };
+
+  const processAudio = async (audioBlob: Blob) => {
+    if (!whisperProcessorRef.current) {
+      showError("Le processeur Whisper n'est pas disponible.");
+      setIsProcessing(false);
+      return;
+    }
+
+    try {
+      // Convert Blob to AudioBuffer (Whisper-web expects AudioBuffer)
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      // Ensure audio is 16kHz mono float32 as expected by Whisper
+      // The library might handle resampling, but it's good practice to be aware.
+      // Let's assume the library handles necessary conversions for simplicity first.
+      // If issues arise, we might need to add explicit resampling here.
+
+      showLoading("Transcription en cours...");
+      const result = await whisperProcessorRef.current.transcribe(audioBuffer);
+      dismissToast(); // Dismiss loading toast
+
+      const transcription = result.text.trim();
+      setTranscribedText(transcription);
+      showSuccess("Transcription terminée !");
+      console.log("Transcription:", transcription);
+
+      // --- Parsing and Calculation Logic (re-used from previous version) ---
+      const initialProcessedText = transcription.toLowerCase();
+      let commandCheckText = initialProcessedText;
+      if (commandCheckText.endsWith('.')) {
+        commandCheckText = commandCheckText.slice(0, -1);
+      }
+
+      if (commandCheckText === "ok" || commandCheckText === "okay") {
+        if (points.length === 0) {
+          showError("Aucun point n'a été dicté avant 'OK'.");
+        } else {
+            // Total is already calculated in useEffect based on points state
+            const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
+            speakText(announcement);
+            showSuccess("Calcul du total terminé.");
+        }
+      } else {
+        const parts = initialProcessedText.split('plus').map(part => part.trim()).filter(part => part !== '');
+
+        if (parts.length === 0) {
+            showError(`Aucun point ou commande 'OK' reconnu dans la transcription : "${transcription}"`);
+        } else {
+            let anyPartParsedSuccessfully = false;
+            const newlyParsedPoints: number[] = [];
+
+            parts.forEach(part => {
+                const parsedNum = parseNumberPart(part);
+                if (parsedNum !== null) {
+                  newlyParsedPoints.push(parsedNum);
+                  anyPartParsedSuccessfully = true;
+                } else {
+                  showError(`Point non reconnu dans la séquence "${transcription}" : "${part}"`);
+                  console.log(`Failed to parse part: original="${transcription}", part="${part}"`);
+                }
+            });
+
+            if (anyPartParsedSuccessfully) {
+                setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points
+                // Total calculation happens in the useEffect triggered by setPoints
+            } else {
+                showError(`Aucun point valide trouvé dans la séquence : "${transcription}"`);
+            }
+        }
+      }
+      // --- End Parsing and Calculation Logic ---
+
+    } catch (error) {
+      console.error("Error processing audio with Whisper:", error);
+      showError("Erreur lors de la transcription audio.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+
+  const handleNewCopy = () => {
+    setPoints([]);
+    setCurrentTotal(null);
+    setConvertedTotal(null);
+    setTranscribedText('');
+    if (isRecording) {
+        stopRecording(); // Stop recording if active
+    }
+    // No need to stop Whisper processor, it stays loaded
     showSuccess("Prêt pour une nouvelle copie.");
   };
 
-  if (!isSupported && isSupported !== undefined) {
-    return (
-      <div className="container mx-auto p-4 flex flex-col items-center justify-center min-h-screen">
-        <Card className="w-full max-w-md"><CardHeader><CardTitle className="text-center text-destructive">Non supporté</CardTitle></CardHeader><CardContent><p className="text-center">Navigateur incompatible. Essayez Chrome/Edge.</p></CardContent></Card>
-      </div>
-    );
-  }
+  // Determine button state and text
+  const isButtonDisabled = !modelLoaded || isProcessing || gradingScale <= 0 || isNaN(gradingScale);
+  const buttonText = isRecording ? "Arrêter l'enregistrement" : (isProcessing ? "Traitement..." : "Commencer l'enregistrement");
+  const buttonIcon = isRecording ? <MicOff className="mr-2 h-4 w-4" /> : (isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mic className="mr-2 h-4 w-4" />);
+  const toggleRecording = isRecording ? stopRecording : startRecording;
+
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
       <div className="text-center">
         <h1 className="text-3xl font-bold">Correcteur oral intelligent</h1>
-        <p className="text-sm text-muted-foreground">Totali</p> {/* Added Totali */}
+        <p className="text-sm text-muted-foreground">Totali</p>
       </div>
 
+      {!modelLoaded && modelLoadingProgress !== null && (
+         <Card className="w-full max-w-lg bg-yellow-50 border-yellow-200">
+            <CardHeader><CardTitle className="text-yellow-700">Chargement du modèle Whisper</CardTitle></CardHeader>
+            <CardContent className="text-center">
+                <p className="text-sm text-yellow-600 mb-2">Veuillez patienter pendant le téléchargement du modèle de reconnaissance vocale ({modelLoadingProgress}%).</p>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                    <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${modelLoadingProgress}%` }}></div>
+                </div>
+            </CardContent>
+         </Card>
+      )}
 
       <Card className="w-full max-w-lg bg-blue-50 border-blue-200">
         <CardHeader>
@@ -376,9 +371,11 @@ const OralGraderPage: React.FC = () => {
         </CardHeader>
         <CardContent className="text-sm text-blue-600 space-y-1">
           <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p>
-          <p>&bull; Cliquez sur "Commencer" et dictez les points **séparés par "plus"** (ex: "deux plus un et demi plus trois").</p> {/* Updated instruction */}
-          <p>&bull; Dites "OK" pour calculer le total.</p>
-          <p>&bull; L'application annonce et affiche le total (et la conversion sur 20 si besoin).</p>
+          <p>&bull; Cliquez sur "Commencer l'enregistrement".</p>
+          <p>&bull; Dictez tous les points pour la copie, séparés par "plus" (ex: "deux plus un et demi plus trois"). Vous pouvez dicter plusieurs séquences.</p>
+          <p>&bull; Cliquez sur "Arrêter l'enregistrement".</p>
+          <p>&bull; L'application transcrit l'audio, calcule le total, et annonce/affiche le résultat.</p>
+          <p>&bull; Dites "OK" *pendant l'enregistrement* pour déclencher le calcul et l'annonce vocale du total *sans arrêter l'enregistrement* (utile pour vérifier le total en cours de dictée).</p> {/* Added OK command during recording */}
           <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
         </CardContent>
       </Card>
@@ -394,20 +391,34 @@ const OralGraderPage: React.FC = () => {
               value={gradingScaleInput}
               onChange={(e) => setGradingScaleInput(e.target.value)}
               min="1"
-              disabled={isListening || currentTotal !== null}
+              disabled={isRecording || isProcessing || !modelLoaded}
               placeholder="Ex: 20, 50, 100..."
             />
           </div>
           <div className="flex space-x-2">
-            <Button onClick={toggleListening} className="flex-1" disabled={!isSupported || gradingScale <= 0 || isNaN(gradingScale)}>
-              {isListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
-              {isListening ? "Arrêter" : "Commencer"}
+            <Button onClick={toggleRecording} className="flex-1" disabled={isButtonDisabled}>
+              {buttonIcon}
+              {buttonText}
             </Button>
-            <Button onClick={handleNewCopy} variant="outline" className="flex-1" disabled={!isSupported}><FilePlus2 className="mr-2 h-4 w-4" /> Nouvelle Copie</Button>
+            <Button onClick={handleNewCopy} variant="outline" className="flex-1" disabled={isRecording || isProcessing || !modelLoaded}><FilePlus2 className="mr-2 h-4 w-4" /> Nouvelle Copie</Button>
           </div>
         </CardContent>
       </Card>
-      {isListening && (<p className="text-lg font-semibold text-primary animate-pulse"><Mic className="inline-block mr-2" /> J'écoute... Dites les points séparés par "plus" ou dites "OK".</p>)} {/* Updated listening message */}
+
+      {isRecording && (<p className="text-lg font-semibold text-primary animate-pulse"><Mic className="inline-block mr-2" /> Enregistrement en cours...</p>)}
+      {isProcessing && (<p className="text-lg font-semibold text-blue-600 animate-pulse"><Loader2 className="inline-block mr-2 animate-spin" /> Traitement audio...</p>)}
+
+      {transcribedText && (
+         <Card className="w-full max-w-lg">
+            <CardHeader><CardTitle>Transcription</CardTitle></CardHeader>
+            <CardContent>
+                <ScrollArea className="h-24 border rounded-md p-2 text-sm text-muted-foreground">
+                    <p className="break-words">{transcribedText}</p>
+                </ScrollArea>
+            </CardContent>
+         </Card>
+      )}
+
       {(points.length > 0 || currentTotal !== null) && (
         <Card className="w-full max-w-lg">
           <CardHeader><CardTitle>Points Dictés</CardTitle></CardHeader>
@@ -429,7 +440,7 @@ const OralGraderPage: React.FC = () => {
             {gradingScale !== 20 && convertedTotal !== null && (
               <p className="text-xl text-muted-foreground">&rarr; Conversion sur 20 : {convertedTotal} / 20</p>
             )}
-            <Button variant="ghost" size="sm" onClick={() => speakText(convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button> {/* Updated speak text */}
+            <Button variant="ghost" size="sm" onClick={() => speakText(convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`)} className="mt-2"><Volume2 className="mr-2 h-4 w-4" /> Réécouter</Button>
           </CardContent>
         </Card>
       )}
