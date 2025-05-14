@@ -143,8 +143,19 @@ const OralGraderPage: React.FC = () => {
       }
 
       // Combine the current pending part (from ref) with the new segment
-      const potentialFullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${cleanedSegment}` : cleanedSegment; // Use ref
+      let potentialFullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${cleanedSegment}` : cleanedSegment; // Use ref
       console.log("Combined potential full sequence:", potentialFullSequence);
+
+      // *** NEW: Clean the sequence before splitting ***
+      // 1. Ensure spaces around '+'
+      potentialFullSequence = potentialFullSequence.replace(/\+/g, ' + ');
+      // 2. Remove any characters that are not letters, numbers, spaces, or '+'
+      potentialFullSequence = potentialFullSequence.replace(/[^a-z0-9\s+]/g, '');
+      // 3. Trim leading/trailing spaces and collapse multiple spaces
+      potentialFullSequence = potentialFullSequence.trim().replace(/\s+/g, ' ');
+
+      console.log("Cleaned sequence before split:", potentialFullSequence);
+
 
       // Split by '+'
       const parts = potentialFullSequence.split('+').map(part => part.trim()).filter(part => part !== '');
