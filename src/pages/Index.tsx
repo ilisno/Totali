@@ -100,6 +100,7 @@ const OralGraderPage: React.FC = () => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false); // State to indicate parsing/command processing
   const [cumulativeTranscription, setCumulativeTranscription] = useState<string>('');
+  const [pendingNumberPart, setPendingNumberPart] = useState<string | null>(null); // State for the number part waiting for 'plus' or command
 
   const recognitionRef = useRef<any>(null); // Reference to the SpeechRecognition instance
   const synthesisRef = useRef<any>(null);
@@ -129,6 +130,7 @@ const OralGraderPage: React.FC = () => {
             setPoints([]); // Clear points
             setCurrentTotal(null); // Clear totals
             setConvertedTotal(null);
+            setPendingNumberPart(null); // Clear pending part
             showLoading("Enregistrement en cours... Dites les points ou 'OK' ou 'fini'.");
         };
 
@@ -148,7 +150,19 @@ const OralGraderPage: React.FC = () => {
 
             // Check for commands
             if (cleanedLatestTranscript === "fini") {
-                console.log("'Fini' command detected. Stopping recognition.");
+                console.log("'Fini' command detected.");
+                // Process any pending part before stopping
+                if (pendingNumberPart) {
+                    const parsedNum = parseNumberPart(pendingNumberPart);
+                    if (parsedNum !== null) {
+                        setPoints(prev => [...prev, parsedNum]);
+                        console.log("Processed pending part on 'fini':", parsedNum);
+                    } else {
+                         showError(`Partie en attente non reconnue avant 'fini' : "${pendingNumberPart}"`);
+                         console.log(`Failed to parse pending part on 'fini': "${pendingNumberPart}"`);
+                    }
+                    setPendingNumberPart(null); // Clear pending part
+                }
                 recognitionRef.current.stop(); // Stop the recognition
                 showSuccess("Enregistrement terminé.");
                 setIsProcessing(false); // Processing finished
@@ -156,13 +170,30 @@ const OralGraderPage: React.FC = () => {
             }
 
             if (cleanedLatestTranscript === "ok" || cleanedLatestTranscript === "okay") {
-                 console.log("'OK' command detected. Announcing total.");
-                 if (points.length === 0) {
+                 console.log("'OK' command detected.");
+                 // Process any pending part before announcing total
+                 let currentPoints = points; // Use current state value
+                 if (pendingNumberPart) {
+                     const parsedNum = parseNumberPart(pendingNumberPart);
+                     if (parsedNum !== null) {
+                         currentPoints = [...points, parsedNum]; // Create new array with pending point
+                         setPoints(currentPoints); // Update state
+                         console.log("Processed pending part on 'OK':", parsedNum);
+                     } else {
+                         showError(`Partie en attente non reconnue avant 'OK' : "${pendingNumberPart}"`);
+                         console.log(`Failed to parse pending part on 'OK': "${pendingNumberPart}"`);
+                     }
+                     setPendingNumberPart(null); // Clear pending part
+                 }
+
+                 if (currentPoints.length === 0) {
                     speakText("Aucun point n'a été dicté.");
                     showError("Aucun point n'a été dicté avant 'OK'.");
                  } else {
-                    // Total is already calculated in useEffect based on points state
-                    const announcement = convertedTotal !== null ? `${convertedTotal} sur 20` : `${currentTotal} sur ${gradingScale}`;
+                    // Recalculate total based on potentially updated points state
+                    const sum = currentPoints.reduce((acc, p) => acc + p, 0);
+                    const converted = gradingScale !== 20 ? parseFloat(((sum / gradingScale) * 20).toFixed(1)) : null;
+                    const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScale}`;
                     speakText(announcement);
                     showSuccess("Annonce du total actuel.");
                  }
@@ -170,7 +201,7 @@ const OralGraderPage: React.FC = () => {
                  return; // Stop processing this result further
             }
 
-            // If not a command, process as points
+            // If not a command, process as potential points
             processTranscriptionSegment(latestTranscript);
             setIsProcessing(false); // Processing finished
         };
@@ -200,7 +231,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [points, currentTotal, convertedTotal]); // Added dependencies for speakText in onresult
+  }, [points, currentTotal, convertedTotal, pendingNumberPart, speakText, gradingScale, setPoints, setPendingNumberPart, showError]); // Added dependencies for state and callbacks used in handlers
 
   // Update numeric gradingScale when input string changes
   useEffect(() => {
@@ -236,37 +267,49 @@ const OralGraderPage: React.FC = () => {
     synthesisRef.current.speak(utterance);
   }, []);
 
-  // Process a single transcription segment to extract points
+  // Process a single transcription segment to extract points based on 'plus'
   const processTranscriptionSegment = useCallback((segment: string) => {
-      const processedSegment = segment.toLowerCase();
-      const parts = processedSegment.split('plus').map(part => part.trim()).filter(part => part !== '');
+      const processedSegment = segment.trim().toLowerCase();
+      if (!processedSegment) return; // Ignore empty segments
+
+      // Combine with pending part from previous segment
+      const combinedText = pendingNumberPart ? `${pendingNumberPart} ${processedSegment}` : processedSegment;
+      console.log("Processing combined text:", combinedText);
+
+      const parts = combinedText.split('plus').map(part => part.trim()).filter(part => part !== '');
 
       if (parts.length === 0) {
-          console.log(`No points found in segment: "${segment}"`);
-          // Optionally show a subtle message or log if a segment had no recognizable points
-      } else {
-          let anyPartParsedSuccessfully = false;
-          const newlyParsedPoints: number[] = [];
+          console.log(`No 'plus' found in segment, setting as pending: "${combinedText}"`);
+          setPendingNumberPart(combinedText); // The whole segment becomes the new pending part
+          return;
+      }
 
-          parts.forEach(part => {
-              const parsedNum = parseNumberPart(part);
-              if (parsedNum !== null) {
-                newlyParsedPoints.push(parsedNum);
-                anyPartParsedSuccessfully = true;
-              } else {
-                console.log(`Failed to parse part "${part}" from segment "${segment}"`);
-                // Optionally show a subtle error for unparseable parts
-              }
-          });
-
-          if (anyPartParsedSuccessfully) {
-              setPoints(prev => [...prev, ...newlyParsedPoints]); // Add all newly parsed points from this segment
-              console.log("Parsed points from segment:", newlyParsedPoints);
+      const newPoints: number[] = [];
+      // Process all parts except the last one
+      for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          const parsedNum = parseNumberPart(part);
+          if (parsedNum !== null) {
+              newPoints.push(parsedNum);
+              console.log("Parsed and added point:", parsedNum, "from part:", part);
           } else {
-              console.log(`No valid points found in segment: "${segment}"`);
+              showError(`Partie non reconnue comme point : "${part}"`);
+              console.log(`Failed to parse part "${part}" from combined text "${combinedText}"`);
           }
       }
-  }, []); // No dependencies needed for this function itself
+
+      // The last part becomes the new pending part
+      const lastPart = parts[parts.length - 1];
+      setPendingNumberPart(lastPart);
+      console.log("Setting new pending part:", lastPart);
+
+
+      // Add the newly parsed points to the state
+      if (newPoints.length > 0) {
+          setPoints(prev => [...prev, ...newPoints]);
+      }
+
+  }, [pendingNumberPart, setPoints, setPendingNumberPart, showError]); // Add dependencies
 
 
   const startRecording = () => {
@@ -303,6 +346,7 @@ const OralGraderPage: React.FC = () => {
     setCurrentTotal(null);
     setConvertedTotal(null);
     setCumulativeTranscription('');
+    setPendingNumberPart(null); // Clear pending part on new copy
     if (isRecording) {
         stopRecording(); // Stop recording if active
     }
@@ -342,10 +386,10 @@ const OralGraderPage: React.FC = () => {
         <CardContent className="text-sm text-blue-600 space-y-1">
           <p>&bull; Choisissez le barème (par ex. 20, 50, 100 ou un nombre personnalisé).</p>
           <p>&bull; Cliquez sur "Commencer l'écoute".</p>
-          <p>&bull; Dictez les points. Le navigateur transcrira votre voix par segments.</p>
-          <p>&bull; Dictez les points pour la copie, séparés par "plus" (ex: "deux plus un et demi plus trois"). Vous pouvez dicter plusieurs séquences.</p>
-          <p>&bull; Dites "OK" pour déclencher l'annonce vocale du total actuel (l'enregistrement continue).</p>
-          <p>&bull; Dites "fini" pour arrêter l'enregistrement.</p>
+          <p>&bull; Dictez un point, puis dites "plus", puis dictez le point suivant (ex: "deux plus un et demi plus trois").</p>
+          <p>&bull; Le dernier point dicté avant une pause ou une commande sera ajouté lorsque vous direz "OK" ou "fini".</p>
+          <p>&bull; Dites "OK" pour déclencher l'annonce vocale du total actuel et ajouter le dernier point dicté (l'enregistrement continue).</p>
+          <p>&bull; Dites "fini" pour arrêter l'enregistrement et ajouter le dernier point dicté.</p>
           <p>&bull; Cliquez sur "Nouvelle Copie" pour réinitialiser.</p>
         </CardContent>
       </Card>
@@ -389,6 +433,16 @@ const OralGraderPage: React.FC = () => {
             </CardContent>
          </Card>
       )}
+
+      {pendingNumberPart && (
+         <Card className="w-full max-w-lg bg-yellow-50 border-yellow-200">
+            <CardHeader><CardTitle className="text-yellow-700">Point en attente</CardTitle></CardHeader>
+            <CardContent className="text-sm text-yellow-600">
+                <p className="break-words">{pendingNumberPart}</p>
+            </CardContent>
+         </Card>
+      )}
+
 
       {(points.length > 0 || currentTotal !== null) && (
         <Card className="w-full max-w-lg">
