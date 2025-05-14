@@ -166,9 +166,9 @@ const OralGraderPage: React.FC = () => {
   const processTranscriptionSegment = useCallback((segment: string) => {
       console.log("--- Processing Segment ---");
       console.log("Initial pendingNumberPart (from ref):", pendingNumberPartRef.current); // Use ref
-      console.log("Latest segment:", segment);
+      console.log("Latest segment:", segment); // This segment is already lowercase now
 
-      const cleanedSegment = segment.trim().toLowerCase();
+      const cleanedSegment = segment.trim(); // Already lowercase, just trim
       if (!cleanedSegment) {
           console.log("Segment is empty after cleaning. Doing nothing.");
           return; // Ignore empty segments
@@ -178,7 +178,7 @@ const OralGraderPage: React.FC = () => {
       let potentialFullSequence = pendingNumberPartRef.current ? `${pendingNumberPartRef.current} ${cleanedSegment}` : cleanedSegment; // Use ref
       console.log("Combined potential full sequence:", potentialFullSequence);
 
-      // *** NEW: Clean the sequence before splitting ***
+      // *** Clean the sequence before splitting ***
       // 1. Ensure spaces around '+'
       potentialFullSequence = potentialFullSequence.replace(/\+/g, ' + ');
       // 2. Remove any characters that are not letters, numbers, spaces, or '+'
@@ -274,20 +274,21 @@ const OralGraderPage: React.FC = () => {
             dismissToast(); // Dismiss loading toast
 
             const latestResultIndex = event.results.length - 1;
-            const latestTranscript = event.results[latestResultIndex][0].transcript;
+            // Convert to lowercase immediately
+            const latestTranscript = event.results[latestResultIndex][0].transcript.toLowerCase();
 
             console.log("--- onresult ---");
-            console.log("Latest segment transcription:", latestTranscript);
+            console.log("Latest segment transcription (lowercase):", latestTranscript);
             console.log("State before processing (from refs):"); // Indicate using refs
             console.log("  points:", pointsRef.current); // Use ref
             console.log("  pendingNumberPart:", pendingNumberPartRef.current); // Use ref
             console.log("  gradingScale:", gradingScaleRef.current); // Use ref
 
 
-            // Update cumulative transcription state
+            // Update cumulative transcription state with lowercase transcript
             setCumulativeTranscription(prev => prev + latestTranscript + ' ');
 
-            const cleanedLatestTranscript = latestTranscript.trim().toLowerCase().replace(/\.$/, ''); // Remove trailing period for command check
+            const cleanedLatestTranscript = latestTranscript.trim().replace(/\.$/, ''); // Remove trailing period for command check
 
             // Check for commands
             if (cleanedLatestTranscript === "fini") {
@@ -324,7 +325,7 @@ const OralGraderPage: React.FC = () => {
             }
 
             // If not a command, process as potential points
-            processTranscriptionSegment(latestTranscript); // This function now uses refs internally
+            processTranscriptionSegment(latestTranscript); // Pass the lowercase transcript
             setIsProcessing(false); // Processing finished
             console.log("--- End onresult (Processed Segment) ---");
         };
