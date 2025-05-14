@@ -288,43 +288,42 @@ const OralGraderPage: React.FC = () => {
             // Update cumulative transcription state with lowercase transcript
             setCumulativeTranscription(prev => prev + latestTranscript + ' ');
 
-            const cleanedLatestTranscript = latestTranscript.trim().replace(/\.$/, ''); // Remove trailing period for command check
+            // Check for commands using regex with word boundaries
+            const commandRegex = /\b(fini|ok|okay|compte)\b/;
+            const commandMatch = latestTranscript.match(commandRegex);
 
-            // Check for commands
-            if (cleanedLatestTranscript === "fini") {
-                console.log("'Fini' command detected.");
-                processPendingPart(); // Process any pending part
-                recognitionRef.current.stop(); // Stop the recognition
-                showSuccess("Enregistrement terminé.");
+            if (commandMatch) {
+                const command = commandMatch[1]; // The matched command word
+                console.log(`Command '${command}' detected.`);
+
+                // Before processing the command, process any pending number part
+                // This ensures that if the user said "5 plus 3 ok", the "3" is added before the total is announced.
+                processPendingPart();
+
+                if (command === "fini") {
+                    recognitionRef.current.stop(); // Stop the recognition
+                    showSuccess("Enregistrement terminé.");
+                } else if (command === "ok" || command === "okay" || command === "compte") {
+                    // Recalculate total based on potentially updated points state (or ref)
+                    const sum = pointsRef.current.reduce((acc, p) => acc + p, 0); // Use the potentially updated pointsRef
+                    const converted = gradingScaleRef.current !== 20 ? parseFloat(((sum / gradingScaleRef.current) * 20).toFixed(1)) : null;
+                    const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScaleRef.current}`;
+
+                    if (pointsRef.current.length === 0) { // Use ref
+                       speakText("Aucun point n'a été dicté.");
+                       showError(`Aucun point n'a été dicté avant '${command}'.`);
+                    } else {
+                       speakText(announcement);
+                       showSuccess(`Annonce du total actuel (${command}).`);
+                    }
+                }
+
                 setIsProcessing(false); // Processing finished
-                console.log("--- End onresult (Fini) ---");
+                console.log(`--- End onresult (${command}) ---`);
                 return; // Stop processing this result further
             }
 
-            if (cleanedLatestTranscript === "ok" || cleanedLatestTranscript === "okay" || cleanedLatestTranscript === "compte") {
-                 console.log(`'${cleanedLatestTranscript}' command detected.`);
-                 processPendingPart(); // Process any pending part
-
-                 // Recalculate total based on potentially updated points state (or ref)
-                 const sum = pointsRef.current.reduce((acc, p) => acc + p, 0); // Use the potentially updated pointsRef
-                 // Use gradingScaleRef.current here
-                 const converted = gradingScaleRef.current !== 20 ? parseFloat(((sum / gradingScaleRef.current) * 20).toFixed(1)) : null;
-                 const announcement = converted !== null ? `${converted} sur 20` : `${sum} sur ${gradingScaleRef.current}`; // Use ref in announcement text too
-
-                 if (pointsRef.current.length === 0) { // Use ref
-                    speakText("Aucun point n'a été dicté.");
-                    showError(`Aucun point n'a été dicté avant '${cleanedLatestTranscript}'.`);
-                 } else {
-                    speakText(announcement);
-                    showSuccess(`Annonce du total actuel (${cleanedLatestTranscript}).`);
-                 }
-
-                 setIsProcessing(false); // Processing finished
-                 console.log(`--- End onresult (${cleanedLatestTranscript}) ---`);
-                 return; // Stop processing this result further
-            }
-
-            // If not a command, process as potential points
+            // If no command was detected, process the segment for potential points
             processTranscriptionSegment(latestTranscript); // Pass the lowercase transcript
             setIsProcessing(false); // Processing finished
             console.log("--- End onresult (Processed Segment) ---");
