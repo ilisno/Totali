@@ -294,12 +294,22 @@ const OralGraderPage: React.FC = () => {
 
             if (commandMatch) {
                 const command = commandMatch[1]; // The matched command word
-                console.log(`Command '${command}' detected.`);
+                const preCommandPart = latestTranscript.substring(0, commandMatch.index).trim(); // Part before the command
 
-                // Before processing the command, process any pending number part
-                // This ensures that if the user said "5 plus 3 ok", the "3" is added before the total is announced.
+                console.log(`Command '${command}' detected.`);
+                console.log(`Part before command: "${preCommandPart}"`);
+
+                // 1. Process the part of the segment *before* the command
+                if (preCommandPart) {
+                    processTranscriptionSegment(preCommandPart);
+                } else {
+                    console.log("No significant part before the command.");
+                }
+
+                // 2. Process any number part that is now pending (which would be the last number from preCommandPart)
                 processPendingPart();
 
+                // 3. Execute command action
                 if (command === "fini") {
                     recognitionRef.current.stop(); // Stop the recognition
                     showSuccess("Enregistrement terminé.");
@@ -323,7 +333,7 @@ const OralGraderPage: React.FC = () => {
                 return; // Stop processing this result further
             }
 
-            // If no command was detected, process the segment for potential points
+            // If no command was detected, process the entire segment for potential points
             processTranscriptionSegment(latestTranscript); // Pass the lowercase transcript
             setIsProcessing(false); // Processing finished
             console.log("--- End onresult (Processed Segment) ---");
