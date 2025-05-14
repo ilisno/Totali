@@ -120,45 +120,51 @@ const OralGraderPage: React.FC = () => {
 
   // Memoize processTranscriptionSegment using useCallback
   const processTranscriptionSegment = useCallback((segment: string) => {
-      const processedSegment = segment.trim().toLowerCase();
-      if (!processedSegment) return; // Ignore empty segments
+      const cleanedSegment = segment.trim().toLowerCase();
+      if (!cleanedSegment) return; // Ignore empty segments
 
-      // Combine with pending part from previous segment
-      const combinedText = pendingNumberPart ? `${pendingNumberPart} ${processedSegment}` : processedSegment;
-      console.log("Processing combined text:", combinedText);
+      // Combine the current pending part with the new segment
+      const potentialFullSequence = pendingNumberPart ? `${pendingNumberPart} ${cleanedSegment}` : cleanedSegment;
+      console.log("Processing potential full sequence:", potentialFullSequence);
 
-      const parts = combinedText.split('plus').map(part => part.trim()).filter(part => part !== '');
-
-      if (parts.length === 0) {
-          console.log(`No 'plus' found in segment, setting as pending: "${combinedText}"`);
-          setPendingNumberPart(combinedText); // The whole segment becomes the new pending part
-          return;
-      }
+      const parts = potentialFullSequence.split('plus').map(part => part.trim()).filter(part => part !== '');
 
       const newPoints: number[] = [];
-      // Process all parts except the last one
-      for (let i = 0; i < parts.length - 1; i++) {
-          const part = parts[i];
-          const parsedNum = parseNumberPart(part);
-          if (parsedNum !== null) {
-              newPoints.push(parsedNum);
-              console.log("Parsed and added point:", parsedNum, "from part:", part);
-          } else {
-              showError(`Partie non reconnue comme point : "${part}"`);
-              console.log(`Failed to parse part "${part}" from combined text "${combinedText}"`);
+      let newPendingPart: string | null = null;
+
+      if (parts.length > 1) {
+          // We found at least one 'plus'. Process all parts except the last one.
+          for (let i = 0; i < parts.length - 1; i++) {
+              const part = parts[i];
+              const parsedNum = parseNumberPart(part);
+              if (parsedNum !== null) {
+                  newPoints.push(parsedNum);
+                  console.log("Parsed and added point:", parsedNum, "from part:", part);
+              } else {
+                  showError(`Partie non reconnue comme point : "${part}"`);
+                  console.log(`Failed to parse part "${part}" from sequence "${potentialFullSequence}"`);
+              }
           }
+          // The last part is the new pending part
+          newPendingPart = parts[parts.length - 1];
+          console.log("Setting new pending part:", newPendingPart);
+
+      } else if (parts.length === 1) {
+          // No 'plus' found in the combined sequence. The whole sequence becomes the new pending part.
+          newPendingPart = parts[0]; // This is the only part
+          console.log(`No 'plus' found, setting "${newPendingPart}" as pending.`);
+      } else {
+          // parts.length is 0, which means potentialFullSequence was empty after trim/filter.
+          // This shouldn't happen if cleanedSegment wasn't empty, but handle defensively.
+          console.log("Processed segment resulted in no parts.");
+          newPendingPart = null; // Clear pending if somehow empty
       }
 
-      // The last part becomes the new pending part
-      const lastPart = parts[parts.length - 1];
-      setPendingNumberPart(lastPart);
-      console.log("Setting new pending part:", lastPart);
-
-
-      // Add the newly parsed points to the state
+      // Update state
       if (newPoints.length > 0) {
           setPoints(prev => [...prev, ...newPoints]);
       }
+      setPendingNumberPart(newPendingPart);
 
   }, [pendingNumberPart, setPoints, setPendingNumberPart, showError]); // Dependencies for processTranscriptionSegment
 
@@ -289,7 +295,7 @@ const OralGraderPage: React.FC = () => {
             synthesisRef.current.cancel();
         }
     };
-  }, [points, currentTotal, convertedTotal, pendingNumberPart, gradingScale, speakText, processTranscriptionSegment]); // Updated dependencies
+  }, [points, currentTotal, convertedTotal, pendingNumberPart, gradingScale, speakText, processTranscriptionSegment, setPoints, setPendingNumberPart, showError]); // Updated dependencies
 
 
   // Update numeric gradingScale when input string changes
